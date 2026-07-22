@@ -150,6 +150,94 @@ You can add more tests in `tests/test_recommender.py`.
 
 ---
 
+## Advanced Features, Scoring Modes, and Diversity
+
+Beyond the baseline four-signal recipe, VibeMatch adds three optional layers. All
+three are **opt-in and backward-compatible**: a profile (or run) that doesn't use
+them scores exactly as the baseline does, so the sample output below is unchanged.
+
+### 1. Advanced song features
+
+Five richer attributes were added to `data/songs.csv` and to scoring. Each is
+scored **only when the user profile supplies the matching preference**, so they
+never affect a baseline profile.
+
+| Attribute | Preference key | How it scores |
+|-----------|----------------|---------------|
+| `release_decade` (e.g. 1980, 2010) | `preferred_decade` | exact decade **+1.0**, one decade away **+0.5**, else 0 |
+| `mood_tags` (e.g. `nostalgic\|dreamy`) | `desired_mood_tags` | **+1.0 × fraction** of the wanted tags the song carries |
+| `language` (e.g. `english`) | `preferred_language` | exact normalized match **+1.0** |
+| `instrumentalness` (0.0–1.0) | `target_instrumentalness` | continuous **+1.0 × (1 − |diff|)** |
+| `explicit` (true/false) | `allow_explicit` | **−2.0** penalty when the listener opts out and the song is explicit |
+
+Base max stays 6.0 for an indifferent profile; each opt-in term can add up to
+another point (or, for explicit, subtract). Example: a "Nostalgic 80s" profile
+(`preferred_decade=1980`, `desired_mood_tags=["nostalgic","dreamy"]`,
+`preferred_language="english"`) correctly ranks *Night Drive Loop* first.
+
+### 2. Scoring modes (Strategy pattern)
+
+Four interchangeable ranking modes re-weight the four core signals. They are
+implemented with the **Strategy pattern** (`ScoringStrategy` objects in a
+`STRATEGIES` registry), so switching modes never touches the scoring code.
+
+| Mode | Genre | Mood | Energy | Acoustic | Use it for |
+|------|-------|------|--------|----------|-----------|
+| `balanced` (default) | 2.0 | 1.0 | 2.0 | 1.0 | the original recipe |
+| `genre-first` | 4.0 | 1.0 | 1.0 | 1.0 | "stay in my genre" |
+| `mood-first` | 1.0 | 4.0 | 1.0 | 1.0 | "match my vibe over my genre" |
+| `energy-focused` | 1.0 | 1.0 | 4.0 | 1.0 | workouts / focus by intensity |
+
+```bash
+python -m src.main genre-first     # run every profile in Genre-First mode
+python -m src.main compare         # rank one profile under ALL modes, side by side
+```
+
+`compare` makes the effect obvious — e.g. for a pop/happy listener, Genre-First
+ranks *Gym Hero* (pop) above *Rooftop Lights*, while Mood-First flips them
+(*Rooftop Lights* is the "happy" match).
+
+### 3. Diversity / fairness penalty
+
+An opt-in **diversity penalty** stops one artist or genre from monopolizing the
+top results. It is a **re-ranking** step (not per-song scoring), because it
+depends on what has already been picked. As the top-k list is built one slot at a
+time, each candidate's effective score is reduced by:
+
+- **−1.5** for each already-listed song by the **same artist**
+- **−0.75** for each already-listed song of the **same genre**
+
+The best effective score wins each slot, so a second song by an already-listed
+artist must be clearly better to earn its place.
+
+```bash
+python -m src.main diversity       # show each profile's top-5 with vs without the penalty
+```
+
+Example (Chill Lofi): without the penalty the top 3 are all lofi (two by
+*LoRoom*); with it, *Focus Flow* (the 2nd LoRoom/lofi track) drops to #5 and an
+ambient and a jazz track surface instead.
+
+### 4. Formatted table output
+
+`python -m src.main table` prints each profile's top-5 as a table (including the
+full reasons for each score). It uses [`tabulate`](https://pypi.org/project/tabulate/)
+when installed and falls back to a dependency-free ASCII renderer otherwise.
+
+```text
++-----+--------------+-----------+---------+------------------------------------------------+
+|   # | Title        | Artist    |   Score | Reasons                                        |
++=====+==============+===========+=========+================================================+
+|   1 | Sunrise City | Neon Echo |    5.78 | Genre match: pop (+2.0)                        |
+|     |              |           |         | Mood match: happy (+1.0)                       |
+|     |              |           |         | Energy similarity: 0.82 vs target 0.80 (+1.96) |
+|     |              |           |         | Acoustic fit: acousticness 0.18 vs non-        |
+|     |              |           |         | acoustic preference (+0.82)                    |
++-----+--------------+-----------+---------+------------------------------------------------+
+```
+
+---
+
 ## Sample Recommendation Output
 
 Real output from `python -m src.main`, run against `data/songs.csv` with the current recipe (genre +2.0, mood +1.0, energy similarity up to +2.0, acoustic similarity up to +1.0). Verified identically in both the sandbox and a local Windows run — same scores, same rankings, down to the decimal. Each profile's top-5 recommendations are shown in its own block below.

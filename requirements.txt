@@ -1,3 +1,4 @@
 pandas
 pytest
 streamlit
+tabulate  # optional: nicer table output in `python -m src.main table` (ASCII fallback if absent)

@@ -55,6 +55,67 @@ Genre and mood are simple yes/no checks. Energy and acoustic feel are "how close
 
 ---
 
+## Advanced Features / Modes / Diversity
+
+Three optional layers sit on top of the basic recipe. All three are **opt-in**:
+if a listener does not use them, the results are exactly the same as before. This
+keeps the sample output in this card and the README correct.
+
+### Advanced song features
+
+We added five richer attributes to each song, and the scorer uses them **only
+when the listener asks for them**:
+
+- **Release decade** (e.g. 1980, 2010) — bonus for the right era.
+- **Detailed mood tags** (e.g. "nostalgic", "dreamy", "aggressive") — partial
+  credit for how many of the listener's wanted tags a song has.
+- **Language** (e.g. English, instrumental) — bonus for an exact match.
+- **Instrumentalness** (0–1) — bonus for being close to the listener's target.
+- **Explicit flag** — a penalty when the listener asks to avoid explicit songs.
+
+These let the recommender handle much more specific tastes, like "nostalgic 80s
+English synthwave, no explicit tracks."
+
+### Scoring modes
+
+The listener can switch between four ranking modes that change how much each
+signal counts:
+
+| Mode | What it favors |
+|------|----------------|
+| Balanced (default) | the original recipe |
+| Genre-First | staying inside the chosen genre |
+| Mood-First | matching the vibe over the genre |
+| Energy-Focused | matching intensity (good for workouts/focus) |
+
+Run them with `python -m src.main <mode>`, or `python -m src.main compare` to see
+one listener ranked by every mode. Under the hood this uses the **Strategy design
+pattern** (see `ai_interactions.md`), so adding a new mode does not require
+changing the scoring code.
+
+### Diversity / fairness penalty
+
+By default the recommender can return several songs by the same artist or in the
+same genre. The optional **diversity penalty** prevents that. As the top list is
+built, a song loses points for each song already on the list that shares its
+artist (−1.5 each) or genre (−0.75 each). This is a re-ranking step, so it looks
+at what has already been chosen — something the normal per-song score cannot do.
+
+Run `python -m src.main diversity` to see each listener's top 5 with and without
+the penalty. Example: for a lofi/chill listener, the plain top 3 are all lofi
+(two by the same artist, *LoRoom*); with the penalty, one of those drops out and
+an ambient track and a jazz track take its place. The trade-off is that a
+slightly lower-scoring song can outrank a higher one to keep the list varied —
+which is the point of a fairness rule.
+
+### Readable table output
+
+`python -m src.main table` prints the top picks as a formatted table that
+includes the full reasons for each score. It uses the `tabulate` library when
+available and falls back to a plain-ASCII table otherwise.
+
+---
+
 ## Observed Behavior / Biases
 
 We noticed several clear patterns. They are not bugs. They come straight from the simple rules.
