@@ -98,12 +98,14 @@ class Recommender:
                 "favorite_mood": user.favorite_mood,
                 "target_energy": user.target_energy,
                 "likes_acoustic": user.likes_acoustic,
+                "prefers_popular": user.prefers_popular,
             },
             {
                 "genre": song.genre,
                 "mood": song.mood,
                 "energy": song.energy,
                 "acousticness": song.acousticness,
+                "popularity": song.popularity,
             },
         )
 
@@ -145,7 +147,20 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     baseline Algorithm Recipe:
 
         score = genre_match(+2.0) + mood_match(+1.0) + energy_similarity(up to +2.0)
-              + acoustic_similarity(up to +1.0)
+              + acoustic_similarity(up to +1.0) + popularity_bonus(up to +1.0)
+
+    Max score is 6.0 when the user is indifferent to popularity
+    (prefers_popular is None), or 7.0 when they state a popularity
+    preference and the song clears the matching threshold.
+
+    energy_similarity is clamped to [0.0, 2.0]: target_energy is first
+    clamped into [0, 1], and the term is floored at 0.0, so an
+    out-of-range energy value can never subtract from the total.
+
+    popularity_bonus is opt-in and threshold-based (mirroring the acoustic
+    weights): +1.0 if prefers_popular is True and song.popularity >= 70,
+    +0.75 if prefers_popular is False and song.popularity <= 30, else 0.0.
+    prefers_popular=None (the default) always scores 0.0 here.
 
     Genre and mood are strict binary gates (normalized equality, NOT
     substring matching -- "pop" does not credit against "indie pop").
@@ -180,12 +195,18 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     if target_energy is None:
         target_energy = user_prefs.get("target_energy", 0.5)
     target_energy = float(target_energy)
+    # Clamp to the valid [0, 1] domain so an out-of-range target (e.g. energy
+    # accidentally passed on a 0-100 scale) can't push energy_similarity
+    # negative and quietly cancel out the genre/mood gates.
+    target_energy = min(1.0, max(0.0, target_energy))
     likes_acoustic = bool(user_prefs.get("likes_acoustic", False))
+    prefers_popular = user_prefs.get("prefers_popular")  # True/False/None (indifferent)
 
     genre = str(song.get("genre", ""))
     mood = str(song.get("mood", ""))
     energy = float(song.get("energy", 0.0))
     acousticness = float(song.get("acousticness", 0.0))
+    popularity = float(song.get("popularity", 50.0))
 
     score = 0.0
     reasons: List[str] = []
@@ -198,7 +219,9 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
         score += 1.0
         reasons.append(f"Mood match: {mood} (+1.0)")
 
-    energy_similarity = 2.0 * (1.0 - abs(energy - target_energy))
+    # Floored at 0.0 as defense-in-depth alongside the target clamp above: an
+    # out-of-range song.energy must never subtract from the total.
+    energy_similarity = max(0.0, 2.0 * (1.0 - abs(energy - target_energy)))
     score += energy_similarity
     reasons.append(
         f"Energy similarity: {energy:.2f} vs target {target_energy:.2f} (+{energy_similarity:.2f})"
@@ -212,14 +235,24 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
         f"Acoustic fit: acousticness {acousticness:.2f} vs {preference_label} preference (+{acoustic_similarity:.2f})"
     )
 
+    # Popularity is opt-in: only scored when the user states a preference.
+    # None (indifferent) earns nothing either way, so profiles that omit it --
+    # including every profile in src/main.py -- keep their original scores.
+    # Threshold-based to mirror the WEIGHT_ACOUSTIC_MATCH/NON_MATCH style.
+    if prefers_popular is True and popularity >= POPULARITY_MATCH_THRESHOLD:
+        score += WEIGHT_POPULARITY_MATCH
+        reasons.append(
+            f"Popularity match: {popularity:.0f} vs popular preference (+{WEIGHT_POPULARITY_MATCH:.2f})"
+        )
+    elif prefers_popular is False and popularity <= POPULARITY_NON_MATCH_THRESHOLD:
+        score += WEIGHT_POPULARITY_NON_MATCH
+        reasons.append(
+            f"Niche pick: popularity {popularity:.0f} vs niche preference (+{WEIGHT_POPULARITY_NON_MATCH:.2f})"
+        )
+
     return round(score, 2), reasons
 
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
-    """
-    Functional implementation of the recommendation logic.
-    Required by src/main.py
-    """
 def _explain(reasons: List[str]) -> str:
     """Formats scoring reasons into a single user-facing explanation string."""
     return " | ".join(reasons) if reasons else "No strong match found."

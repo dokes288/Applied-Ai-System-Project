@@ -17,16 +17,28 @@ Real-world recommenders almost never rely on a single signal. Platforms like Spo
 This is the actual scoring logic implemented in `score_song()` / `Recommender._score_song()` (both paths delegate to the same function, so they always agree):
 
 ```
-score = genre_match + mood_match + energy_similarity + acoustic_similarity
+score = genre_match + mood_match + energy_similarity + acoustic_similarity + popularity_bonus
 
 genre_match          = 2.0 if song.genre == user.favorite_genre else 0.0
 mood_match           = 1.0 if song.mood == user.favorite_mood  else 0.0
-energy_similarity    = 2.0 * (1 - abs(song.energy - user.target_energy))
+target_energy        = clamp(user.target_energy, 0.0, 1.0)   # out-of-range input is clamped
+energy_similarity    = max(0.0, 2.0 * (1 - abs(song.energy - target_energy)))  # floored at 0
 target_acousticness  = 1.0 if user.likes_acoustic else 0.0
 acoustic_similarity  = 1.0 * (1 - abs(song.acousticness - target_acousticness))
 
-max possible score = 6.0
+# popularity_bonus is OPT-IN: only scored when the user states a preference.
+popularity_bonus     = 1.00 if user.prefers_popular is True  and song.popularity >= 70 else
+                       0.75 if user.prefers_popular is False and song.popularity <= 30 else
+                       0.0   # prefers_popular is None (default) => always 0.0
+
+max possible score = 6.0 (prefers_popular = None) / 7.0 (popularity preference stated and met)
 ```
+
+The energy term is guarded twice: `target_energy` is clamped into `[0, 1]` and the
+term is floored at `0.0`, so an out-of-range energy value (e.g. one accidentally
+passed on a 0â100 scale) can never subtract from the score and cancel the gates.
+`popularity_bonus` defaults to `0.0` for every profile that doesn't set
+`prefers_popular`, so all sample output below is unchanged by its addition.
 
 **Data flow:** `User Prefs` → loop over every song in the catalog, scoring genre match, mood match, energy similarity, and acoustic similarity → sum into a total per song → sort all songs by score, descending → return the top `k`.
 
@@ -49,6 +61,7 @@ Each `Song` stores:
 | `mood` | happy, chill, intense | Exact match to user's preferred mood — binary gate, no partial credit |
 | `energy` | 0.0–1.0 | Continuous similarity to user's target energy |
 | `acousticness` | 0.0–1.0 | Continuous similarity to acoustic or non-acoustic preference |
+| `popularity` | 0–100 | Opt-in threshold bonus, only when `prefers_popular` is set: +1.0 if popular (≥70) and user wants popular; +0.75 if niche (≤30) and user wants niche |
 | `tempo_bpm` | 118 | Loaded, not yet used in scoring |
 | `valence` | 0.0–1.0 | Loaded, not yet used in scoring |
 | `danceability` | 0.0–1.0 | Loaded, not yet used in scoring |
@@ -61,6 +74,7 @@ Each `UserProfile` (or dict in the functional API) stores:
 - `favorite_mood` — e.g. `"happy"`
 - `target_energy` — float from 0.0 (calm) to 1.0 (intense)
 - `likes_acoustic` — whether the user prefers acoustic-sounding tracks (`True`) or non-acoustic tracks (`False`)
+- `prefers_popular` — `True` (wants popular tracks), `False` (wants niche/under-the-radar), or `None` (indifferent, the default — scores no popularity bonus either way)
 
 ### Scoring rule
 
@@ -138,13 +152,14 @@ You can add more tests in `tests/test_recommender.py`.
 
 ## Sample Recommendation Output
 
-Real output from `python -m src.main`, run against `data/songs.csv` with the current recipe (genre +2.0, mood +1.0, energy similarity up to +2.0, acoustic similarity up to +1.0). Verified identically in both the sandbox and a local Windows run — same scores, same rankings, down to the decimal:
+Real output from `python -m src.main`, run against `data/songs.csv` with the current recipe (genre +2.0, mood +1.0, energy similarity up to +2.0, acoustic similarity up to +1.0). Verified identically in both the sandbox and a local Windows run — same scores, same rankings, down to the decimal. Each profile's top-5 recommendations are shown in its own block below.
+
+### Profile 1 — High-Energy Pop
 
 ```text
-Loading songs from data/songs.csv...
-
 ====================================================================
- USER PROFILE: genre=pop, mood=happy, energy=0.8, likes_acoustic=False
+ USER PROFILE: High-Energy Pop
+ (genre=pop, mood=happy, energy=0.8, likes_acoustic=False)
 ====================================================================
 
 1. Sunrise City — Neon Echo
@@ -180,9 +195,14 @@ Loading songs from data/songs.csv...
    Reasons:
      - Energy similarity: 0.91 vs target 0.80 (+1.78)
      - Acoustic fit: acousticness 0.10 vs non-acoustic preference (+0.90)
+```
 
+### Profile 2 — Chill Lofi
+
+```text
 ====================================================================
- USER PROFILE: genre=lofi, mood=chill, energy=0.4, likes_acoustic=True
+ USER PROFILE: Chill Lofi
+ (genre=lofi, mood=chill, energy=0.4, likes_acoustic=True)
 ====================================================================
 
 1. Library Rain — Paper Lanterns
@@ -220,9 +240,14 @@ Loading songs from data/songs.csv...
    Reasons:
      - Energy similarity: 0.37 vs target 0.40 (+1.94)
      - Acoustic fit: acousticness 0.89 vs acoustic preference (+0.89)
+```
 
+### Profile 3 — Deep Intense Rock
+
+```text
 ====================================================================
- USER PROFILE: genre=rock, mood=intense, energy=0.9, likes_acoustic=False
+ USER PROFILE: Deep Intense Rock
+ (genre=rock, mood=intense, energy=0.9, likes_acoustic=False)
 ====================================================================
 
 1. Storm Runner — Voltline
@@ -258,6 +283,47 @@ Loading songs from data/songs.csv...
      - Energy similarity: 0.76 vs target 0.90 (+1.72)
      - Acoustic fit: acousticness 0.35 vs non-acoustic preference (+0.65)
 ```
+
+### Profile 4 — Off-Catalog Taste (no genre/mood match)
+
+```text
+====================================================================
+ USER PROFILE: Off-Catalog Taste (no genre/mood match)
+ (genre=metal, mood=angry, energy=0.85, likes_acoustic=False)
+====================================================================
+
+1. Gym Hero — Max Pulse
+   Score: 2.79
+   Reasons:
+     - Energy similarity: 0.93 vs target 0.85 (+1.84)
+     - Acoustic fit: acousticness 0.05 vs non-acoustic preference (+0.95)
+
+2. Storm Runner — Voltline
+   Score: 2.78
+   Reasons:
+     - Energy similarity: 0.91 vs target 0.85 (+1.88)
+     - Acoustic fit: acousticness 0.10 vs non-acoustic preference (+0.90)
+
+3. Sunrise City — Neon Echo
+   Score: 2.76
+   Reasons:
+     - Energy similarity: 0.82 vs target 0.85 (+1.94)
+     - Acoustic fit: acousticness 0.18 vs non-acoustic preference (+0.82)
+
+4. Night Drive Loop — Neon Echo
+   Score: 2.58
+   Reasons:
+     - Energy similarity: 0.75 vs target 0.85 (+1.80)
+     - Acoustic fit: acousticness 0.22 vs non-acoustic preference (+0.78)
+
+5. Rooftop Lights — Indigo Parade
+   Score: 2.47
+   Reasons:
+     - Energy similarity: 0.76 vs target 0.85 (+1.82)
+     - Acoustic fit: acousticness 0.35 vs non-acoustic preference (+0.65)
+```
+
+This fourth profile is a deliberate near-miss: `metal`/`angry` match no song in the catalog, so both categorical gates score 0.0 for every track and ranking is decided purely by energy + acoustic similarity. Note that every score falls below **3.0** — the most any song can earn without the genre (2.0) and mood (1.0) gates firing.
 
 Both the OOP `Recommender` path and the functional `recommend_songs()` path produce identical scores and rankings for the same profile/catalog, since `Recommender._score_song()` delegates directly to `score_song()` rather than duplicating its logic. Note the deterministic tie-break visible above: `Night Drive Loop` and `Storm Runner` tie at 2.68 in the first profile and resolve alphabetically, not by catalog insertion order.
 
