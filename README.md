@@ -469,3 +469,84 @@ content-based — one honest slice of that stack, made fully explainable.
 - **Filter-bubble risk** — even simple rules can reinforce existing taste.
 
 A fuller, graded discussion is in **[model_card.md](model_card.md)**.
+
+---
+
+## Live vs. Offline — the same request, two engines
+
+VibeMatch runs the **same pipeline** whether or not an API key is present: the
+retrieval and grounding machinery is identical, and only the **parse** and
+**generate** steps swap between the live Claude model and the deterministic
+offline fallback. Below is the identical request run through both paths. Both
+transcripts are **real, verbatim output** — the live block is exactly what
+`claude-opus-5` returned (contractions and all; a captured transcript is not
+edited).
+
+**Live path** — `ANTHROPIC_API_KEY` set, model `claude-opus-5`:
+
+```text
+You asked: "nostalgic 80s synthwave, nothing explicit, no lyrics"
+
+Parsed profile (claude): {'genre': 'synthwave', 'energy': 0.55, 'likes_acoustic': False,
+  'desired_mood_tags': ['nostalgic'], 'preferred_decade': 1980,
+  'preferred_language': 'instrumental', 'target_instrumentalness': 0.9, 'allow_explicit': False}
+
+Retrieved (content-based engine):
+  1. Night Drive Loop — Neon Echo [synthwave]  (6.88)
+  2. Coffee Shop Stories — Slow Stereo [jazz]  (4.95)
+  3. Library Rain — Paper Lanterns [lofi]  (4.74)
+  4. Midnight Coding — LoRoom [lofi]  (3.98)
+  5. Focus Flow — LoRoom [lofi]  (3.90)
+
+Recommendation (claude):
+  "Night Drive Loop" by Neon Echo is the clear top pick here — it's straight-up
+  synthwave from the 1980s era, tagged nostalgic, and its 0.75 energy with low
+  acousticness (0.22) gives you that glowing, electronic night-drive feel you're
+  after. Its one caveat is instrumentalness at 0.40 against your fully-instrumental
+  preference, so if you want zero vocals, "Library Rain" by Paper Lanterns is the
+  safest bet at 0.90 instrumentalness, confirmed instrumental, and also tagged
+  nostalgic — just softer lofi rather than synth. "Coffee Shop Stories" by Slow
+  Stereo is another fully instrumental, nostalgic option that lands close to the
+  era at 1990s, though its jazz leaning and high acousticness (0.89) take it
+  further from the synth sound.
+```
+
+**Offline path** — no API key (deterministic fallback):
+
+```text
+You asked: "nostalgic 80s synthwave, nothing explicit, no lyrics"
+
+Parsed profile (offline): {'genre': 'synthwave', 'energy': 0.5, 'likes_acoustic': False,
+  'desired_mood_tags': ['nostalgic'], 'preferred_decade': 1980,
+  'preferred_language': 'instrumental', 'target_instrumentalness': 0.9, 'allow_explicit': False}
+
+Retrieved (content-based engine):
+  1. Night Drive Loop — Neon Echo [synthwave]  (6.78)
+  2. Coffee Shop Stories — Slow Stereo [jazz]  (5.05)
+  3. Library Rain — Paper Lanterns [lofi]  (4.84)
+  4. Midnight Coding — LoRoom [lofi]  (4.08)
+  5. Focus Flow — LoRoom [lofi]  (4.00)
+
+Recommendation (offline):
+  For "nostalgic 80s synthwave, nothing explicit, no lyrics", the best match is
+  Night Drive Loop by Neon Echo (score 6.78) — Genre match: synthwave (+2.0).
+  You might also like Coffee Shop Stories (5.05), Library Rain (4.84).
+```
+
+**What differs, and what does not:**
+
+- **Same #1 pick, same shortlist.** Both retrieve the identical five songs and
+  lead with *Night Drive Loop* — the retrieval engine is shared, so the core
+  result is stable across engines.
+- **The live parse reasoned about energy.** Claude inferred `energy: 0.55` from
+  "nostalgic … synthwave", where the offline keyword parser used its `0.5`
+  default. That small difference nudged the scores (e.g. *Night Drive Loop* 6.88
+  live vs. 6.78 offline) — a concrete example of the LLM adding judgment the
+  keyword parser cannot.
+- **The live generation is genuinely more helpful.** It weighs a real trade-off —
+  flagging that the top pick is only `0.40` instrumental against a
+  fully-instrumental request, and recommending *Library Rain* (0.90) for zero
+  vocals — while the offline template gives a solid but mechanical summary.
+- **Both stay grounded.** Every song the live answer names (*Night Drive Loop*,
+  *Library Rain*, *Coffee Shop Stories*) was in the retrieved set — the grounding
+  guard holds on the live path, which is the whole point of the RAG design.
