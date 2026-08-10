@@ -108,18 +108,20 @@ class AgenticPlanner:
         )
 
         # ── Step 4: reflect & retry ──────────────────────────────────
-        if len(positive_results) < self.min_results and (genre or mood):
+        # Only retry when we have a genre to drop (dropping a None genre is a no-op).
+        if len(positive_results) < self.min_results and genre:
             trace.append(
                 f"Step 4: Only {len(positive_results)} result(s) have a positive score "
-                f"(min_results={self.min_results}). Relaxing constraints and retrying."
+                f"(min_results={self.min_results}). Relaxing genre constraint and retrying."
             )
             relaxed = self.recommender.recommend(
                 genre=None, mood=mood, tags=tags, bpm=bpm, top_n=top_n
             )
-            if len([r for r in relaxed if r["score"] > 0]) > len(positive_results):
+            relaxed_positive = [r for r in relaxed if r["score"] > 0]
+            if len(relaxed_positive) > len(positive_results):
                 results = relaxed
                 trace.append(
-                    f"  Relaxed run produced {len([r for r in relaxed if r['score'] > 0])} "
+                    f"  Relaxed run produced {len(relaxed_positive)} "
                     "positive-score result(s). Using relaxed results."
                 )
             else:

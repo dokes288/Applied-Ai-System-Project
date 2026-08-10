@@ -274,13 +274,13 @@ class TestAgenticPlanner:
         assert outcome["success"] is True
 
     def test_retry_on_low_results(self):
-        # Only one pop song with mood "happy"; requesting genre="classical" (no match)
+        # Only pop songs with mood "happy"; requesting genre="classical" (no match)
         # and mood="energetic" (no match) → 0 positive-score results → retry triggered.
         catalog = MusicCatalog(songs=[
             Song("Pop1", "P", "pop", 100, "happy", []),
             Song("Pop2", "Q", "pop", 110, "happy", []),
         ])
-        # min_results=1 so that a single positive-score result satisfies the retry
+        # min_results=3 means any fewer positive results triggers the retry
         planner = AgenticPlanner(catalog, min_results=3)
         outcome = planner.run(genre="classical", mood="energetic", top_n=3)
         assert outcome["success"] is True
