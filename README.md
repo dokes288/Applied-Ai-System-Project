@@ -1,20 +1,296 @@
-# 🎵 Music Recommender Simulation
+# 🎵 VibeMatch — An Explainable, AI-Assisted Music Recommender
 
-## Project Summary
+> A content-based music recommender you can talk to in plain English, that
+> explains every pick, runs with **or without** an API key, and ships with an
+> automated reliability gate.
 
-This project simulates a small music recommender called **VibeMatch**. Each song is stored as structured metadata (genre, mood, energy, tempo, valence, and more). A user describes their taste with a short profile, and the system scores every song in a 10-track catalog. The highest-scoring songs become recommendations, each with a plain-language explanation of why it ranked well.
-
-The goal is to show how real-world AI recommenders work at a miniature scale: turn preferences and item features into ranked predictions, then reflect on what the system gets right, what it misses, and where bias can appear.
+**Original project (AI-110, Modules 1–3): "VibeMatch — Music Recommender
+Simulation."** The original project was a rule-based, content-based recommender:
+each of 10 songs is stored as structured metadata (genre, mood, energy, tempo,
+valence, acousticness, …), a user describes their taste as a short profile, and
+the system scores every song and returns the top matches, each with a
+plain-language explanation of *why* it ranked well. Its goal was to show, at a
+miniature scale, how real recommenders turn user preferences + item features into
+ranked predictions — and to make the resulting biases (genre over-weighting, tiny
+catalog, no behavioral data) visible and discussable.
 
 ---
 
-## How The System Works
+## Summary — what this project does and why it matters
 
-Real-world recommenders almost never rely on a single signal. Platforms like Spotify and YouTube run **hybrid** systems that blend collaborative filtering — learning from what other users with similar taste played, skipped, or saved — with content-based filtering, which scores an item purely on its own attributes (genre, tempo, energy, and so on). Collaborative signals are powerful because they surface unexpected matches a feature-based system would never find on its own, but they need behavioral data to work at all, so they struggle with brand-new users and brand-new songs. Content-based signals solve exactly that cold-start gap, at the cost of only ever recommending things that *resemble* what a listener already engages with. **VibeMatch prioritizes the content-based half of that picture, deliberately and transparently:** it scores every song purely on how well its metadata and audio features match a stated taste profile, weighting genre and mood as binary gates (2.0 and 1.0 points respectively) and treating energy and acousticness as continuous similarity terms on top. That tradeoff is the point of this simulation — by never looking at other users' behavior, VibeMatch stays fully explainable (every recommendation ships with the exact reasons it scored well) at the cost of the discovery and cold-start resilience a real collaborative signal would add.
+This project extends that rule-based recommender into an **AI system** while
+keeping everything that made the original explainable. Two capabilities are new:
 
-### Algorithm Recipe
+1. **Natural-language recommendations (RAG).** Instead of hand-writing a profile,
+   you type a request like *"nostalgic 80s synthwave, nothing explicit."* A
+   language model turns that into a structured profile, the recommender retrieves
+   the best-matching songs **with their reasons**, and a language model writes a
+   recommendation **grounded only in those retrieved songs**.
+2. **A reliability / quality gate.** An automated harness measures how correctly
+   and consistently the pipeline behaves and fails the build if any metric
+   regresses.
 
-This is the actual scoring logic implemented in `score_song()` / `Recommender._score_song()` (both paths delegate to the same function, so they always agree):
+**Why it matters:** it demonstrates the two ideas most production AI systems are
+built on — **retrieval-augmented generation** (ground the model in real data so it
+doesn't make things up) and **evaluation** (measure the AI, don't just trust it) —
+in a small, fully reproducible package. Crucially, it runs **with the Claude API
+when a key is present and a deterministic offline fallback when it isn't**, so
+anyone can clone it and get a working result immediately.
+
+---
+
+## Architecture Overview
+
+The full diagram lives in **[system_diagram.md](system_diagram.md)** (Mermaid
+source). In short, a request flows **input → process → output** through three
+stages, with automated checks and humans at the edges:
+
+```
+👤 user request
+      │  (natural language)
+      ▼
+  CLI  ──►  1. PARSE ──► 🛡️ validate ──► 2. RETRIEVE ──► 3. GENERATE ──► 🛡️ grounding guard ──► answer ──► 👤 user
+ src/main.py   (LLM or          profile     recommend_songs()   (LLM or        only retrieved                     reads &
+               offline)                     over songs.csv       offline)       songs allowed?                    judges
+```
+
+**Main components**
+
+| Component | File | Role |
+|-----------|------|------|
+| **CLI / orchestrator** | `src/main.py` | Entry point; routes `ask`, `reliability`, and the scoring modes |
+| **Retriever** | `src/recommender.py` + `data/songs.csv` | Content-based scorer: score → sort → explain; returns top-k songs **with reason strings** |
+| **RAG pipeline (the "agent" steps)** | `src/rag.py` | Parse free text → retrieve → generate a grounded answer; Claude (`claude-opus-5`) live or a deterministic offline implementation |
+| **Evaluator / tester** | `src/reliability.py`, `tests/` | Metrics + pass/fail gate; `pytest` unit tests |
+
+**Where AI results are checked** (🛡️ automated, 👤 human): a **profile guardrail**
+validates/clamps the parsed profile before scoring; a **grounding guard** discards
+any generated answer that names a song that wasn't retrieved; the **reliability
+gate + pytest** block on regressions; and humans (the listener, and the developer
+reviewing the PASS/FAIL report) make the final judgment.
+
+---
+
+## Setup Instructions
+
+Requires **Python 3.10+**. Runs on Windows, macOS, and Linux.
+
+```bash
+# 1. Clone and enter the project
+git clone https://github.com/dokes288/Applied-Ai-System-Project.git
+cd Applied-Ai-System-Project
+
+# 2. (optional but recommended) create a virtual environment
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+.venv\Scripts\Activate.ps1       # Windows PowerShell
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Run it — no API key needed (deterministic offline path)
+python -m src.main ask "chill lofi for studying, instrumental"
+python -m src.main reliability
+pytest -q
+```
+
+**Optional — enable the live Claude path.** Set an Anthropic API key and the same
+commands automatically use the real LLM (`claude-opus-5`) for the parse and
+generate steps; without a key they use the offline fallback. No code changes.
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."     # macOS / Linux
+$env:ANTHROPIC_API_KEY = "sk-ant-..."     # Windows PowerShell
+```
+
+See **[.env.example](.env.example)** for all environment variables
+(`ANTHROPIC_API_KEY`, `VIBEMATCH_MODEL`, `VIBEMATCH_DEBUG`).
+
+**Other commands**
+
+```bash
+python -m src.main                 # the 4 classic demo profiles (baseline recipe)
+python -m src.main compare         # one profile ranked under all scoring modes
+python -m src.main diversity       # top-5 with vs. without the diversity penalty
+python -m src.main table           # formatted table output (with full reasons)
+```
+
+---
+
+## Sample Interactions
+
+All outputs below are **real** runs on the deterministic offline path (no API
+key), so they reproduce exactly. With a key set, the parse/generate steps are
+produced by Claude instead, but the retrieval and grounding are identical.
+
+### Example 1 — Natural-language request (RAG)
+
+**Input**
+```bash
+python -m src.main ask "nostalgic 80s synthwave, nothing explicit, no lyrics"
+```
+**Output**
+```text
+You asked: "nostalgic 80s synthwave, nothing explicit, no lyrics"
+
+Parsed profile (offline): {'genre': 'synthwave', 'energy': 0.5, 'likes_acoustic': False,
+  'desired_mood_tags': ['nostalgic'], 'preferred_decade': 1980,
+  'preferred_language': 'instrumental', 'target_instrumentalness': 0.9, 'allow_explicit': False}
+
+Retrieved (content-based engine):
+  1. Night Drive Loop — Neon Echo [synthwave]  (6.78)
+  2. Coffee Shop Stories — Slow Stereo [jazz]  (5.05)
+  3. Library Rain — Paper Lanterns [lofi]  (4.84)
+  4. Midnight Coding — LoRoom [lofi]  (4.08)
+  5. Focus Flow — LoRoom [lofi]  (4.00)
+
+Recommendation (offline):
+  For "nostalgic 80s synthwave, nothing explicit, no lyrics", the best match is
+  Night Drive Loop by Neon Echo (score 6.78) — Genre match: synthwave (+2.0).
+  You might also like Coffee Shop Stories (5.05), Library Rain (4.84).
+```
+The free text is correctly parsed into a synthwave / 1980s / instrumental /
+no-explicit profile, and *Night Drive Loop* — the catalog's 1980s synthwave
+track — is retrieved and recommended. The answer only names retrieved songs.
+
+### Example 2 — A different request, different result
+
+**Input**
+```bash
+python -m src.main ask "chill lofi for studying, instrumental"
+```
+**Output (recommendation)**
+```text
+Retrieved (content-based engine):
+  1. Library Rain — Paper Lanterns [lofi]  (7.04)
+  2. Midnight Coding — LoRoom [lofi]  (7.00)
+  3. Focus Flow — LoRoom [lofi]  (6.00)
+  ...
+Recommendation (offline):
+  For "chill lofi for studying, instrumental", the best match is Library Rain by
+  Paper Lanterns (score 7.04) — Genre match: lofi (+2.0). You might also like
+  Midnight Coding (7.00), Focus Flow (6.00).
+```
+
+### Example 3 — Classic profile-based recommendation with reasons
+
+**Input**
+```bash
+python -m src.main            # runs the "High-Energy Pop" demo profile, among others
+```
+**Output (top pick)**
+```text
+1. Sunrise City — Neon Echo
+   Score: 5.78
+   Reasons:
+     - Genre match: pop (+2.0)
+     - Mood match: happy (+1.0)
+     - Energy similarity: 0.82 vs target 0.80 (+1.96)
+     - Acoustic fit: acousticness 0.18 vs non-acoustic preference (+0.82)
+```
+Every recommendation ships with the exact reasons it scored well — the
+explainability the whole project is built around. (Full four-profile output is in
+[Reference: Full Sample Recommendation Output](#reference-full-sample-recommendation-output).)
+
+---
+
+## Design Decisions & Trade-offs
+
+- **Content-based, not collaborative.** VibeMatch scores songs purely on their own
+  attributes. **Trade-off:** it works with zero behavioral data and is fully
+  explainable (great for a portfolio demo and cold-start), but it can't make the
+  social "people like you also loved…" discoveries a real hybrid system does.
+- **Explainability over cleverness.** Every score is a sum of named, inspectable
+  terms, and every recommendation lists its reasons. **Trade-off:** a simple
+  additive model is easy to reason about and audit, but it's blind to signals it
+  doesn't score (valence, tempo) — see Testing Summary.
+- **RAG grounded in retrieval, not a bare chatbot.** The LLM's answer is
+  constructed *from* the retrieved songs and their real scores; it's told never to
+  mention a song it wasn't given, and a **grounding guard** enforces that at
+  runtime. **Trade-off:** the answer is factual and on-catalog, at the cost of the
+  free-form creativity an ungrounded model would show.
+- **Live LLM + deterministic offline fallback.** Both AI steps use Claude when a
+  key is available and a deterministic local implementation otherwise. **Trade-off:**
+  more code to maintain two paths, but the project is reproducible for anyone (a
+  grader with no key still gets a working, identical-every-run result) and testable
+  offline.
+- **Opt-in advanced features.** Extra signals (decade, mood tags, language,
+  instrumentalness, explicit filter) and scoring modes only fire when a request
+  asks for them, so the documented baseline behavior never silently changes.
+- **Strategy pattern for scoring modes.** Ranking modes are interchangeable
+  `ScoringStrategy` objects, so adding a mode never edits the scoring code.
+- **Structured outputs for parsing.** The live parse step uses the model's
+  structured-output mode, guaranteeing a valid profile object rather than
+  hand-parsing free text.
+
+These decisions came out of real experiments — e.g. switching genre matching from
+substring to strict equality, and the acoustic term from a hard threshold to a
+continuous score — documented in
+[Reference: Experiments](#reference-experiments).
+
+---
+
+## Testing Summary
+
+**What worked**
+- **31 automated tests pass** (`pytest -q`): 21 for the recommender, 10 for the
+  RAG pipeline and reliability harness.
+- **Reliability gate passes at 1.00 on every metric** (`python -m src.main
+  reliability`): parse determinism, parse accuracy, retrieval precision@1,
+  grounding rate, and end-to-end determinism — and it exits non-zero on
+  regression, so it's CI-ready.
+- The **offline path** was verified end-to-end (this environment has no API key),
+  proving the reproducibility guarantee holds.
+- The **grounding guard** is tested directly: a crafted answer naming a
+  non-retrieved song is correctly flagged as a hallucination and discarded.
+
+**What didn't work at first / what I had to fix**
+- An early energy term could go **negative** on out-of-range input and cancel the
+  genre/mood match; fixed by clamping the target to `[0,1]` and flooring the term
+  at 0 (covered by a regression test).
+- A previously advertised popularity preference was a **silent no-op** because the
+  CSV had no popularity column; fixed by adding the data and wiring it in as an
+  opt-in term.
+- Genre matching by substring let "indie pop" credit against "pop"; switched to
+  strict equality to match the validated behavior.
+
+**What I learned**
+- The model is **only as good as the signals it scores.** A "metal, angry"
+  request surfaces upbeat pop, because the scorer ignores valence (dark vs.
+  bright) and tempo — the exact features that define the genre. Weighting can't
+  fix a missing signal.
+- For anything with an LLM, **a guardrail plus a measurement harness matters as
+  much as the feature itself** — the grounding guard and reliability gate are what
+  make the AI output trustworthy.
+
+---
+
+## Reflection (brief)
+
+Building this made the AI system pattern concrete: **retrieve real data, ground
+the model in it, then measure the result** — the same shape whether the catalog
+is 10 songs or a hundred million. The most valuable habit it reinforced was
+treating AI output as something to *verify*, not trust: the grounding guard and
+the reliability gate did more for the system's credibility than any single prompt.
+
+> My full, graded **responsible-AI reflection** — how I collaborated with AI, one
+> helpful and one flawed AI suggestion, and the system's limitations — is in
+> **[model_card.md](model_card.md)**. The agentic build workflow (prompts,
+> generated changes, manual verification) is in
+> **[ai_interactions.md](ai_interactions.md)**.
+
+---
+---
+
+# Reference
+
+Deeper technical detail for readers who want it. None of this is required to run
+the project.
+
+## Reference: How the Recommender Scores
+
+This is the actual scoring logic in `score_song()` / `Recommender._score_song()`
+(both paths delegate to the same function, so they always agree):
 
 ```
 score = genre_match + mood_match + energy_similarity + acoustic_similarity + popularity_bonus
@@ -34,556 +310,153 @@ popularity_bonus     = 1.00 if user.prefers_popular is True  and song.popularity
 max possible score = 6.0 (prefers_popular = None) / 7.0 (popularity preference stated and met)
 ```
 
-The energy term is guarded twice: `target_energy` is clamped into `[0, 1]` and the
-term is floored at `0.0`, so an out-of-range energy value (e.g. one accidentally
-passed on a 0â100 scale) can never subtract from the score and cancel the gates.
-`popularity_bonus` defaults to `0.0` for every profile that doesn't set
-`prefers_popular`, so all sample output below is unchanged by its addition.
-
-**Data flow:** `User Prefs` → loop over every song in the catalog, scoring genre match, mood match, energy similarity, and acoustic similarity → sum into a total per song → sort all songs by score, descending → return the top `k`.
-
-Genre outweighs mood 2:1, since genre is treated as the primary style filter and mood as a secondary preference signal. Energy and acoustic fit are both continuous distance terms rather than hard thresholds — every value contributes proportionally, in whichever direction the preference points, so there's no "dead zone" where a song earns nothing regardless of how close it is.
-
-**Potential biases to expect:**
-
-- This system might over-prioritize genre, ignoring great songs that match the user's mood but come from a different genre — e.g., an intense rock track could outrank an intense pop track purely because pop is the stated favorite genre.
-- Genre and mood are exact-match only, so "close enough" genres (e.g., "pop" vs. "indie pop") get zero credit, identical to a totally unrelated genre — there's no partial-credit mechanism.
-- With only four signals scored, a song that's a near-perfect match on valence, tempo, or danceability gets no credit for it — those features are loaded but not yet wired into scoring.
-- Because genre + mood alone are worth 3.0 combined — half the max score — a song can win almost entirely on categorical match even with a mediocre energy/acoustic fit, while a song with excellent energy and acoustic fit but no genre/mood match can't out-rank it. Worth watching for in testing, especially with a small catalog where few songs share both categorical fields.
+**Data flow:** score every song → sort by score descending (ties broken by title,
+ascending, for determinism) → return the top `k` → attach an explanation built
+from the reasons that earned points. Genre outweighs mood 2:1 (genre is the
+primary style filter); energy and acoustic fit are continuous distance terms, so
+there's no "dead zone" where a near-match earns nothing.
 
 ### Song features
 
-Each `Song` stores:
-
 | Feature | Example | Role in scoring |
 |---------|---------|-----------------|
-| `genre` | pop, lofi, rock | Exact match to user's favorite genre — binary gate, no partial credit |
-| `mood` | happy, chill, intense | Exact match to user's preferred mood — binary gate, no partial credit |
-| `energy` | 0.0–1.0 | Continuous similarity to user's target energy |
-| `acousticness` | 0.0–1.0 | Continuous similarity to acoustic or non-acoustic preference |
-| `popularity` | 0–100 | Opt-in threshold bonus, only when `prefers_popular` is set: +1.0 if popular (≥70) and user wants popular; +0.75 if niche (≤30) and user wants niche |
-| `tempo_bpm` | 118 | Loaded, not yet used in scoring |
-| `valence` | 0.0–1.0 | Loaded, not yet used in scoring |
-| `danceability` | 0.0–1.0 | Loaded, not yet used in scoring |
+| `genre` | pop, lofi, rock | Exact match to favorite genre — binary gate |
+| `mood` | happy, chill, intense | Exact match to preferred mood — binary gate |
+| `energy` | 0.0–1.0 | Continuous similarity to target energy |
+| `acousticness` | 0.0–1.0 | Continuous similarity to acoustic preference |
+| `popularity` | 0–100 | Opt-in bonus when `prefers_popular` is set |
+| `release_decade`, `mood_tags`, `language`, `instrumentalness`, `explicit` | — | Opt-in advanced signals (below) |
+| `tempo_bpm`, `valence`, `danceability` | — | Loaded, not yet scored |
 
-### User profile
+## Reference: Advanced Features, Scoring Modes & Diversity
 
-Each `UserProfile` (or dict in the functional API) stores:
+All three layers are **opt-in and backward-compatible** — a request that doesn't
+use them scores exactly as the baseline does.
 
-- `favorite_genre` — e.g. `"pop"`
-- `favorite_mood` — e.g. `"happy"`
-- `target_energy` — float from 0.0 (calm) to 1.0 (intense)
-- `likes_acoustic` — whether the user prefers acoustic-sounding tracks (`True`) or non-acoustic tracks (`False`)
-- `prefers_popular` — `True` (wants popular tracks), `False` (wants niche/under-the-radar), or `None` (indifferent, the default — scores no popularity bonus either way)
-
-### Scoring rule
-
-For every song, `score_song()` adds points from four components:
-
-```
-score = genre_match
-      + mood_match
-      + energy_similarity
-      + acoustic_similarity
-```
-
-This is the same formula documented in full under [Algorithm Recipe](#algorithm-recipe) above:
-
-- Genre match: **2.0** if `song.genre == user.favorite_genre` exactly, else **0.0** — no partial credit
-- Mood match: **1.0** if `song.mood == user.favorite_mood` exactly, else **0.0** — no partial credit
-- Energy similarity: up to **2.0**, continuous — `2.0 * (1 - |song.energy - user.target_energy|)`
-- Acoustic similarity: up to **1.0**, continuous — `1.0 * (1 - |song.acousticness - target_acousticness|)`, where `target_acousticness` is `1.0` if `user.likes_acoustic` else `0.0`
-
-Max possible score: **6.0**. `valence`, `tempo_bpm`, and `danceability` are loaded by `load_songs()` but not currently wired into any of these terms — see [Limitations and Risks](#limitations-and-risks).
-
-### Choosing recommendations
-
-1. Score every song in the catalog with `score_song()`.
-2. Sort by score, descending — ties broken by title, ascending, so results are deterministic regardless of catalog order.
-3. Return the top `k` songs.
-4. Attach an explanation built from the reasons that earned points.
-
-```text
-UserProfile + Song catalog
-        │
-        ▼
-  score each song  ──►  sort by score, tie-break by title  ──►  top k + explanations
-```
-
-Both an **OOP** path (`Recommender.recommend()`) and a **functional** path (`recommend_songs()`) exist. `Recommender._score_song()` delegates directly to `score_song()` rather than duplicating its logic, so the two paths always agree on scores and rankings for the same profile/catalog.
-
----
-
-## Getting Started
-
-### Setup
-
-1. Create a virtual environment (optional but recommended):
-
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate      # Mac or Linux
-   .venv\Scripts\activate         # Windows
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Run the app:
-
-   ```bash
-   python -m src.main
-   ```
-
-### Running Tests
-
-Run the starter tests with:
-
-```bash
-pytest
-```
-
-You can add more tests in `tests/test_recommender.py`.
-
----
-
-## Advanced Features, Scoring Modes, and Diversity
-
-Beyond the baseline four-signal recipe, VibeMatch adds three optional layers. All
-three are **opt-in and backward-compatible**: a profile (or run) that doesn't use
-them scores exactly as the baseline does, so the sample output below is unchanged.
-
-### 1. Advanced song features
-
-Five richer attributes were added to `data/songs.csv` and to scoring. Each is
-scored **only when the user profile supplies the matching preference**, so they
-never affect a baseline profile.
+**Advanced song features** (scored only when the request supplies the matching preference):
 
 | Attribute | Preference key | How it scores |
 |-----------|----------------|---------------|
-| `release_decade` (e.g. 1980, 2010) | `preferred_decade` | exact decade **+1.0**, one decade away **+0.5**, else 0 |
-| `mood_tags` (e.g. `nostalgic\|dreamy`) | `desired_mood_tags` | **+1.0 × fraction** of the wanted tags the song carries |
-| `language` (e.g. `english`) | `preferred_language` | exact normalized match **+1.0** |
-| `instrumentalness` (0.0–1.0) | `target_instrumentalness` | continuous **+1.0 × (1 − |diff|)** |
-| `explicit` (true/false) | `allow_explicit` | **−2.0** penalty when the listener opts out and the song is explicit |
+| `release_decade` | `preferred_decade` | exact decade **+1.0**, one decade away **+0.5** |
+| `mood_tags` (e.g. `nostalgic\|dreamy`) | `desired_mood_tags` | **+1.0 × fraction** of wanted tags the song has |
+| `language` | `preferred_language` | exact match **+1.0** |
+| `instrumentalness` | `target_instrumentalness` | continuous **+1.0 × (1 − |diff|)** |
+| `explicit` | `allow_explicit` | **−2.0** penalty when the listener opts out |
 
-Base max stays 6.0 for an indifferent profile; each opt-in term can add up to
-another point (or, for explicit, subtract). Example: a "Nostalgic 80s" profile
-(`preferred_decade=1980`, `desired_mood_tags=["nostalgic","dreamy"]`,
-`preferred_language="english"`) correctly ranks *Night Drive Loop* first.
+**Scoring modes (Strategy pattern):** `balanced` (default), `genre-first`,
+`mood-first`, `energy-focused` — interchangeable weight sets. Run
+`python -m src.main compare` to see one profile ranked under all four.
 
-### 2. Scoring modes (Strategy pattern)
+**Diversity / fairness penalty** (`python -m src.main diversity`): a re-ranking
+step that subtracts **−1.5** per already-listed same-artist song and **−0.75** per
+same-genre song, so one artist or genre can't monopolize the top-k.
 
-Four interchangeable ranking modes re-weight the four core signals. They are
-implemented with the **Strategy pattern** (`ScoringStrategy` objects in a
-`STRATEGIES` registry), so switching modes never touches the scoring code.
+## Reference: AI Features in depth (RAG + Reliability)
 
-| Mode | Genre | Mood | Energy | Acoustic | Use it for |
-|------|-------|------|--------|----------|-----------|
-| `balanced` (default) | 2.0 | 1.0 | 2.0 | 1.0 | the original recipe |
-| `genre-first` | 4.0 | 1.0 | 1.0 | 1.0 | "stay in my genre" |
-| `mood-first` | 1.0 | 4.0 | 1.0 | 1.0 | "match my vibe over my genre" |
-| `energy-focused` | 1.0 | 1.0 | 4.0 | 1.0 | workouts / focus by intensity |
+The RAG pipeline ([src/rag.py](src/rag.py)) runs **parse → retrieve → generate**:
+an LLM (or offline parser) turns free text into a profile; `recommend_songs`
+retrieves the top-k songs with reasons; an LLM (or offline template) writes an
+answer grounded only in those songs. Live steps use the **Claude API**
+(`claude-opus-5`) when `ANTHROPIC_API_KEY` is set; otherwise a deterministic
+offline path runs. Guardrails: profile validation/clamping, a grounding guard
+(discards hallucinated answers), refusal/error handling that degrades to offline,
+and step-level logging (`VIBEMATCH_DEBUG=1`).
 
-```bash
-python -m src.main genre-first     # run every profile in Genre-First mode
-python -m src.main compare         # rank one profile under ALL modes, side by side
-```
+The reliability harness ([src/reliability.py](src/reliability.py)) scores the
+pipeline on labeled queries and exits non-zero on regression:
 
-`compare` makes the effect obvious — e.g. for a pop/happy listener, Genre-First
-ranks *Gym Hero* (pop) above *Rooftop Lights*, while Mood-First flips them
-(*Rooftop Lights* is the "happy" match).
+| Metric | Checks | Current |
+|--------|--------|---------|
+| `parse_determinism` | same query → identical profile twice | 1.00 |
+| `parse_accuracy` | parsed fields match hand-labeled expectations | 1.00 |
+| `retrieval_precision_at_1` | requested genre (when in catalog) is #1 | 1.00 |
+| `grounding_rate` | answers name only retrieved songs | 1.00 |
+| `e2e_determinism` | same query → identical final answer | 1.00 |
 
-### 3. Diversity / fairness penalty
+## Reference: Full Sample Recommendation Output
 
-An opt-in **diversity penalty** stops one artist or genre from monopolizing the
-top results. It is a **re-ranking** step (not per-song scoring), because it
-depends on what has already been picked. As the top-k list is built one slot at a
-time, each candidate's effective score is reduced by:
-
-- **−1.5** for each already-listed song by the **same artist**
-- **−0.75** for each already-listed song of the **same genre**
-
-The best effective score wins each slot, so a second song by an already-listed
-artist must be clearly better to earn its place.
-
-```bash
-python -m src.main diversity       # show each profile's top-5 with vs without the penalty
-```
-
-Example (Chill Lofi): without the penalty the top 3 are all lofi (two by
-*LoRoom*); with it, *Focus Flow* (the 2nd LoRoom/lofi track) drops to #5 and an
-ambient and a jazz track surface instead.
-
-### 4. Formatted table output
-
-`python -m src.main table` prints each profile's top-5 as a table (including the
-full reasons for each score). It uses [`tabulate`](https://pypi.org/project/tabulate/)
-when installed and falls back to a dependency-free ASCII renderer otherwise.
-
-```text
-+-----+--------------+-----------+---------+------------------------------------------------+
-|   # | Title        | Artist    |   Score | Reasons                                        |
-+=====+==============+===========+=========+================================================+
-|   1 | Sunrise City | Neon Echo |    5.78 | Genre match: pop (+2.0)                        |
-|     |              |           |         | Mood match: happy (+1.0)                       |
-|     |              |           |         | Energy similarity: 0.82 vs target 0.80 (+1.96) |
-|     |              |           |         | Acoustic fit: acousticness 0.18 vs non-        |
-|     |              |           |         | acoustic preference (+0.82)                    |
-+-----+--------------+-----------+---------+------------------------------------------------+
-```
-
----
-
-## AI Features: Natural-Language RAG + Reliability Gate
-
-The baseline recommender takes a hand-built profile dict. Two AI features sit on
-top of it and change how the system actually works.
-
-### 1. Retrieval-Augmented Generation (RAG) — ask in plain English
-
-Instead of writing a profile by hand, you describe what you want in natural
-language and get a grounded recommendation back:
-
-```bash
-python -m src.main ask "nostalgic 80s synthwave, nothing explicit, no lyrics"
-```
-
-The request runs a real RAG pipeline ([src/rag.py](src/rag.py)):
-
-1. **Parse** — an LLM turns your free text into a structured VibeMatch profile
-   (genre, mood, energy, decade, tags, explicit preference, …). This *is* the
-   retrieval query.
-2. **Retrieve** — the existing content-based engine (`recommend_songs`) scores
-   the 10-song catalog against that profile and returns the top-k songs **with
-   their reason strings**. This is the retrieval step.
-3. **Generate** — an LLM writes a short recommendation **grounded only in the
-   retrieved songs and their scores/reasons** — it is instructed never to
-   mention a song it wasn't given.
-
-The retrieved data actively shapes the answer (the model recommends *from* the
-retrieved list, citing the real scores) — it isn't printed alongside a generic
-reply. That's what makes it RAG rather than a chatbot bolted on.
-
-**Live Claude + reproducible offline fallback.** Both the parse and generate
-steps call the **Claude API** (`claude-opus-5`) when `anthropic` is installed and
-`ANTHROPIC_API_KEY` is set, and fall back to a **deterministic, dependency-free
-local implementation** otherwise. So a grader with no key still gets a working,
-identical-every-run result; a grader with a key gets the real LLM.
-
-**Guardrails & logging:**
-- The parsed profile is validated and clamped before it reaches the engine.
-- A **grounding guard** checks the generated answer only names retrieved songs;
-  if the LLM hallucinates a song, its answer is discarded and the deterministic
-  generator is used instead.
-- API errors and safety refusals are caught and degrade to the offline path —
-  the command never crashes.
-- Every step logs which engine ran, token usage, and any guardrail trip
-  (`VIBEMATCH_DEBUG=1` to see INFO logs).
-
-### 2. Reliability / quality gate
-
-A measurement harness ([src/reliability.py](src/reliability.py)) scores the
-pipeline on labeled queries and **exits non-zero if any metric regresses** — a
-CI-ready quality gate. It runs entirely on the deterministic offline path, so it
-needs no API key and gives the same numbers everywhere.
-
-```bash
-python -m src.main reliability
-```
-
-| Metric | What it checks |
-|--------|----------------|
-| `parse_determinism` | same query parsed twice → identical profile |
-| `parse_accuracy` | parsed fields match hand-labeled expectations |
-| `retrieval_precision_at_1` | requested genre (when in catalog) is the #1 result |
-| `grounding_rate` | generated answers mention only retrieved songs |
-| `e2e_determinism` | same query → identical final answer |
-
-Current run: **all metrics 1.00, RESULT: PASS**.
-
-### Setup for the AI features
-
-```bash
-pip install -r requirements.txt          # installs anthropic (optional)
-
-# Optional — enables the live Claude path (offline works without it):
-#   PowerShell:  $env:ANTHROPIC_API_KEY = "sk-ant-..."
-#   bash:        export ANTHROPIC_API_KEY="sk-ant-..."
-
-python -m src.main ask "chill lofi for studying, instrumental"
-python -m src.main reliability
-pytest -q                                 # 31 tests (recommender + RAG + reliability)
-```
-
-See [.env.example](.env.example) for all environment variables. The full agentic
-workflow used to build these features — prompts, generated changes, and manual
-verification — is documented in [ai_interactions.md](ai_interactions.md).
-
----
-
-## Sample Recommendation Output
-
-Real output from `python -m src.main`, run against `data/songs.csv` with the current recipe (genre +2.0, mood +1.0, energy similarity up to +2.0, acoustic similarity up to +1.0). Verified identically in both the sandbox and a local Windows run — same scores, same rankings, down to the decimal. Each profile's top-5 recommendations are shown in its own block below.
+Real output from `python -m src.main` against `data/songs.csv` (baseline recipe).
+Each profile's top-5 is shown in its own block.
 
 ### Profile 1 — High-Energy Pop
-
 ```text
-====================================================================
- USER PROFILE: High-Energy Pop
- (genre=pop, mood=happy, energy=0.8, likes_acoustic=False)
-====================================================================
+ USER PROFILE: High-Energy Pop  (genre=pop, mood=happy, energy=0.8, likes_acoustic=False)
 
-1. Sunrise City — Neon Echo
-   Score: 5.78
-   Reasons:
-     - Genre match: pop (+2.0)
-     - Mood match: happy (+1.0)
-     - Energy similarity: 0.82 vs target 0.80 (+1.96)
-     - Acoustic fit: acousticness 0.18 vs non-acoustic preference (+0.82)
-
-2. Gym Hero — Max Pulse
-   Score: 4.69
-   Reasons:
-     - Genre match: pop (+2.0)
-     - Energy similarity: 0.93 vs target 0.80 (+1.74)
-     - Acoustic fit: acousticness 0.05 vs non-acoustic preference (+0.95)
-
-3. Rooftop Lights — Indigo Parade
-   Score: 3.57
-   Reasons:
-     - Mood match: happy (+1.0)
-     - Energy similarity: 0.76 vs target 0.80 (+1.92)
-     - Acoustic fit: acousticness 0.35 vs non-acoustic preference (+0.65)
-
-4. Night Drive Loop — Neon Echo
-   Score: 2.68
-   Reasons:
-     - Energy similarity: 0.75 vs target 0.80 (+1.90)
-     - Acoustic fit: acousticness 0.22 vs non-acoustic preference (+0.78)
-
-5. Storm Runner — Voltline
-   Score: 2.68
-   Reasons:
-     - Energy similarity: 0.91 vs target 0.80 (+1.78)
-     - Acoustic fit: acousticness 0.10 vs non-acoustic preference (+0.90)
+1. Sunrise City — Neon Echo        Score: 5.78  (genre +2.0 | mood +1.0 | energy +1.96 | acoustic +0.82)
+2. Gym Hero — Max Pulse            Score: 4.69  (genre +2.0 | energy +1.74 | acoustic +0.95)
+3. Rooftop Lights — Indigo Parade  Score: 3.57  (mood +1.0 | energy +1.92 | acoustic +0.65)
+4. Night Drive Loop — Neon Echo    Score: 2.68  (energy +1.90 | acoustic +0.78)
+5. Storm Runner — Voltline         Score: 2.68  (energy +1.78 | acoustic +0.90)
 ```
 
 ### Profile 2 — Chill Lofi
-
 ```text
-====================================================================
- USER PROFILE: Chill Lofi
- (genre=lofi, mood=chill, energy=0.4, likes_acoustic=True)
-====================================================================
+ USER PROFILE: Chill Lofi  (genre=lofi, mood=chill, energy=0.4, likes_acoustic=True)
 
-1. Library Rain — Paper Lanterns
-   Score: 5.76
-   Reasons:
-     - Genre match: lofi (+2.0)
-     - Mood match: chill (+1.0)
-     - Energy similarity: 0.35 vs target 0.40 (+1.90)
-     - Acoustic fit: acousticness 0.86 vs acoustic preference (+0.86)
-
-2. Midnight Coding — LoRoom
-   Score: 5.67
-   Reasons:
-     - Genre match: lofi (+2.0)
-     - Mood match: chill (+1.0)
-     - Energy similarity: 0.42 vs target 0.40 (+1.96)
-     - Acoustic fit: acousticness 0.71 vs acoustic preference (+0.71)
-
-3. Focus Flow — LoRoom
-   Score: 4.78
-   Reasons:
-     - Genre match: lofi (+2.0)
-     - Energy similarity: 0.40 vs target 0.40 (+2.00)
-     - Acoustic fit: acousticness 0.78 vs acoustic preference (+0.78)
-
-4. Spacewalk Thoughts — Orbit Bloom
-   Score: 3.68
-   Reasons:
-     - Mood match: chill (+1.0)
-     - Energy similarity: 0.28 vs target 0.40 (+1.76)
-     - Acoustic fit: acousticness 0.92 vs acoustic preference (+0.92)
-
-5. Coffee Shop Stories — Slow Stereo
-   Score: 2.83
-   Reasons:
-     - Energy similarity: 0.37 vs target 0.40 (+1.94)
-     - Acoustic fit: acousticness 0.89 vs acoustic preference (+0.89)
+1. Library Rain — Paper Lanterns   Score: 5.76  (genre +2.0 | mood +1.0 | energy +1.90 | acoustic +0.86)
+2. Midnight Coding — LoRoom        Score: 5.67  (genre +2.0 | mood +1.0 | energy +1.96 | acoustic +0.71)
+3. Focus Flow — LoRoom             Score: 4.78  (genre +2.0 | energy +2.00 | acoustic +0.78)
+4. Spacewalk Thoughts — Orbit Bloom Score: 3.68 (mood +1.0 | energy +1.76 | acoustic +0.92)
+5. Coffee Shop Stories — Slow Stereo Score: 2.83 (energy +1.94 | acoustic +0.89)
 ```
 
 ### Profile 3 — Deep Intense Rock
-
 ```text
-====================================================================
- USER PROFILE: Deep Intense Rock
- (genre=rock, mood=intense, energy=0.9, likes_acoustic=False)
-====================================================================
+ USER PROFILE: Deep Intense Rock  (genre=rock, mood=intense, energy=0.9, likes_acoustic=False)
 
-1. Storm Runner — Voltline
-   Score: 5.88
-   Reasons:
-     - Genre match: rock (+2.0)
-     - Mood match: intense (+1.0)
-     - Energy similarity: 0.91 vs target 0.90 (+1.98)
-     - Acoustic fit: acousticness 0.10 vs non-acoustic preference (+0.90)
-
-2. Gym Hero — Max Pulse
-   Score: 3.89
-   Reasons:
-     - Mood match: intense (+1.0)
-     - Energy similarity: 0.93 vs target 0.90 (+1.94)
-     - Acoustic fit: acousticness 0.05 vs non-acoustic preference (+0.95)
-
-3. Sunrise City — Neon Echo
-   Score: 2.66
-   Reasons:
-     - Energy similarity: 0.82 vs target 0.90 (+1.84)
-     - Acoustic fit: acousticness 0.18 vs non-acoustic preference (+0.82)
-
-4. Night Drive Loop — Neon Echo
-   Score: 2.48
-   Reasons:
-     - Energy similarity: 0.75 vs target 0.90 (+1.70)
-     - Acoustic fit: acousticness 0.22 vs non-acoustic preference (+0.78)
-
-5. Rooftop Lights — Indigo Parade
-   Score: 2.37
-   Reasons:
-     - Energy similarity: 0.76 vs target 0.90 (+1.72)
-     - Acoustic fit: acousticness 0.35 vs non-acoustic preference (+0.65)
+1. Storm Runner — Voltline         Score: 5.88  (genre +2.0 | mood +1.0 | energy +1.98 | acoustic +0.90)
+2. Gym Hero — Max Pulse            Score: 3.89  (mood +1.0 | energy +1.94 | acoustic +0.95)
+3. Sunrise City — Neon Echo        Score: 2.66  (energy +1.84 | acoustic +0.82)
+4. Night Drive Loop — Neon Echo    Score: 2.48  (energy +1.70 | acoustic +0.78)
+5. Rooftop Lights — Indigo Parade  Score: 2.37  (energy +1.72 | acoustic +0.65)
 ```
 
-### Profile 4 — Off-Catalog Taste (no genre/mood match)
-
+### Profile 4 — Off-Catalog Taste (deliberate near-miss)
 ```text
-====================================================================
- USER PROFILE: Off-Catalog Taste (no genre/mood match)
- (genre=metal, mood=angry, energy=0.85, likes_acoustic=False)
-====================================================================
+ USER PROFILE: Off-Catalog Taste  (genre=metal, mood=angry, energy=0.85, likes_acoustic=False)
 
-1. Gym Hero — Max Pulse
-   Score: 2.79
-   Reasons:
-     - Energy similarity: 0.93 vs target 0.85 (+1.84)
-     - Acoustic fit: acousticness 0.05 vs non-acoustic preference (+0.95)
-
-2. Storm Runner — Voltline
-   Score: 2.78
-   Reasons:
-     - Energy similarity: 0.91 vs target 0.85 (+1.88)
-     - Acoustic fit: acousticness 0.10 vs non-acoustic preference (+0.90)
-
-3. Sunrise City — Neon Echo
-   Score: 2.76
-   Reasons:
-     - Energy similarity: 0.82 vs target 0.85 (+1.94)
-     - Acoustic fit: acousticness 0.18 vs non-acoustic preference (+0.82)
-
-4. Night Drive Loop — Neon Echo
-   Score: 2.58
-   Reasons:
-     - Energy similarity: 0.75 vs target 0.85 (+1.80)
-     - Acoustic fit: acousticness 0.22 vs non-acoustic preference (+0.78)
-
-5. Rooftop Lights — Indigo Parade
-   Score: 2.47
-   Reasons:
-     - Energy similarity: 0.76 vs target 0.85 (+1.82)
-     - Acoustic fit: acousticness 0.35 vs non-acoustic preference (+0.65)
+1. Gym Hero — Max Pulse            Score: 2.79   ← no genre/mood match fires;
+2. Storm Runner — Voltline         Score: 2.78     every score stays below 3.0,
+3. Sunrise City — Neon Echo        Score: 2.76     decided purely by energy + acoustic
+4. Night Drive Loop — Neon Echo    Score: 2.58
+5. Rooftop Lights — Indigo Parade  Score: 2.47
 ```
+`metal`/`angry` match no song, so both categorical gates score 0.0 and ranking is
+decided purely by energy + acoustic similarity — every score falls below **3.0**,
+the most any song can earn without the genre (2.0) and mood (1.0) gates firing.
 
-This fourth profile is a deliberate near-miss: `metal`/`angry` match no song in the catalog, so both categorical gates score 0.0 for every track and ranking is decided purely by energy + acoustic similarity. Note that every score falls below **3.0** — the most any song can earn without the genre (2.0) and mood (1.0) gates firing.
+## Reference: How Real Streaming Platforms Work
 
-Both the OOP `Recommender` path and the functional `recommend_songs()` path produce identical scores and rankings for the same profile/catalog, since `Recommender._score_song()` delegates directly to `score_song()` rather than duplicating its logic. Note the deterministic tie-break visible above: `Night Drive Loop` and `Storm Runner` tie at 2.68 in the first profile and resolve alphabetically, not by catalog insertion order.
+Spotify, YouTube Music, and Apple Music use **hybrid** recommenders:
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or demo video link here -->
+- **Collaborative filtering** (behavior-based): learns from likes, skips, replays,
+  and playlist co-occurrence — "users like you also liked…". Strong at discovery;
+  weak at cold-start; prone to popularity bias.
+- **Content-based filtering** (attribute-based): learns from what the item *is* —
+  genre, audio features, embeddings, lyrics. Works for brand-new songs; can
+  over-recommend similar-sounding tracks.
 
----
+Production systems blend both and add **context** (workout vs. focus),
+**diversity controls**, and **fairness** goals. VibeMatch is purely
+content-based — one honest slice of that stack, made fully explainable.
 
-## How Major Streaming Platforms Predict What You'll Love Next
-
-Spotify, YouTube Music, Apple Music, and similar services use **hybrid** recommenders that combine multiple signals. Two core approaches differ in *what data they learn from*:
-
-### Collaborative filtering (behavior-based)
-
-The system learns from **what users do**, not from audio alone.
-
-- **User–user CF:** "Users similar to you also liked these songs."
-- **Item–item CF:** "People who liked Song A also liked Song B."
-- **Playlist/session co-occurrence:** Spotify famously treats songs that appear together on playlists or in the same listening session as similar, even when their genres differ.
-
-**Strengths:** discovers unexpected matches, leverages crowd wisdom, improves as data grows.
-
-**Weaknesses:** cold-start for new users and new songs, popularity bias, filter bubbles.
-
-**Data types:** likes, skips, replays, saves, playlist adds, follow actions, listening duration, session context (time of day, device).
-
-### Content-based filtering (attribute-based)
-
-The system learns from **what the item is**.
-
-- **Metadata:** genre, artist, release year, tags.
-- **Audio features:** tempo, energy, danceability, valence, acousticness (similar to our CSV).
-- **Deep audio analysis:** spectrograms, embeddings from neural networks (Spotify's Echo Nest heritage).
-- **Text/NLP:** lyrics, reviews, web mentions.
-
-**Strengths:** works for new songs with no play history; explains "sounds like X"; good for niche taste.
-
-**Weaknesses:** can over-recommend similar-sounding tracks; misses social/cultural discovery.
-
-**Data types:** BPM, key, loudness, mood tags, lyrical themes, artist similarity vectors.
-
-### How platforms combine them
-
-| Platform | Collaborative signals | Content signals |
-|----------|----------------------|-----------------|
-| **Spotify** | Playlist co-occurrence, listening history, Discover Weekly models | Audio CNN features, NLP on lyrics/metadata, artist graphs |
-| **YouTube Music** | Watch/listen sequences, skip/replay patterns, taste communities | Audio embeddings, video metadata, search history from Google ecosystem |
-
-Production systems also add **context** (workout vs focus), **diversity controls**, and **fairness** goals so recommendations are not only accurate but varied and representative.
-
-Our VibeMatch simulation is **purely content-based**: it never sees other users' behavior, which mirrors only one slice of a real platform stack.
-
----
-
-## Experiments You Tried
+## Reference: Experiments
 
 | Change | What happened |
 |--------|---------------|
-| Genre/mood matching: substring (`_matches()`) vs. strict equality | With substring matching, "indie pop" credited against a "pop" preference (e.g. *Rooftop Lights* scored 4.92). Switched to strict equality to match what was actually validated during design — *Rooftop Lights* dropped to 2.92 once genre stopped crediting. |
-| Acoustic term: hard threshold vs. continuous similarity | The threshold version (`+1.0` if `acousticness >= 0.7`, `+0.5` if `<= 0.3`) left a 0.3–0.7 dead zone earning nothing either way. Switched to a continuous similarity term (`1.0 * (1 - |diff|)`) so every acousticness value contributes proportionally, regardless of preference direction. |
-| No tie-break vs. deterministic tie-break by title | Without a secondary sort key, songs with equal scores (e.g. *Night Drive Loop* and *Storm Runner*, both 2.68 for a pop/happy profile) resolved by catalog insertion order — not guaranteed stable if the CSV row order changed. Added `(-score, title)` as the sort key so ties resolve the same way every run. |
-| `likes_acoustic=True` vs. `likes_acoustic=False` | Same song, opposite acoustic_similarity direction — e.g. *Sunrise City* (acousticness 0.18) scores `+0.82` for a non-acoustic preference but only `+0.18` for an acoustic one. |
-
-These experiments show that **scoring rules are design choices with real, testable tradeoffs** — matching strategy, threshold-vs-continuous scoring, and tie-break rules all visibly change which songs rank where, even holding the catalog and profile fixed.
-
----
+| Genre/mood matching: substring vs. strict equality | Substring let "indie pop" credit against "pop" (*Rooftop Lights* 4.92); strict equality dropped it to 2.92 — matching validated behavior. |
+| Acoustic term: hard threshold vs. continuous | The threshold left a 0.3–0.7 dead zone; the continuous term makes every value contribute proportionally. |
+| No tie-break vs. tie-break by title | Added `(-score, title)` so equal scores resolve identically every run. |
+| Doubling energy weight (sensitivity test) | Reshuffled half the profiles but didn't fix the "metal → pop" problem — proof that weighting can't replace a missing signal (valence/tempo). |
 
 ## Limitations and Risks
 
-- **Tiny catalog** — only 10 handcrafted songs; no long-tail discovery.
+- **Tiny catalog** — 10 handcrafted songs; no long-tail discovery.
 - **No behavioral data** — no skips, repeats, or "people like you" signals.
-- **No lyrics or culture** — cannot understand language, nostalgia, or social trends.
-- **Feature bias** — overweighting genre/mood can hide great matches in adjacent genres.
-- **Filter bubble risk** — even simple rules can reinforce existing preferences.
-- **Representation gaps** — a small, curated dataset may underrepresent artists, languages, or regions.
+- **Blind to some signals** — valence, tempo, and danceability are loaded but not
+  scored, so mood color and intensity don't register.
+- **Feature/representation bias** — over-weighting genre/mood, and a small curated
+  dataset, can hide adjacent-genre matches and underrepresent artists or regions.
+- **Filter-bubble risk** — even simple rules can reinforce existing taste.
 
-See `model_card.md` for a fuller discussion.
-
----
-
-## Reflection
-
-This project showed me that recommenders are **ranking engines**: they convert structured signals (user prefs + item features) into an ordered list of likely favorites. The math here is simple addition, but the pattern is the same at Spotify scale — score, sort, explain (or at least justify internally).
-
-It also highlighted **bias and fairness**. A system that rewards genre match and popularity-like features can keep users inside familiar lanes. Real platforms fight this with diversity rules and collaborative discovery, but those same tools can still amplify mainstream artists or under-recommend music from underrepresented communities. Building even a toy recommender makes those tradeoffs visible early.
-
-Read and complete the model card for more detail:
-
-[**Model Card**](model_card.md)
+A fuller, graded discussion is in **[model_card.md](model_card.md)**.
