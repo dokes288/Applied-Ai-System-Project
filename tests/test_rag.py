@@ -6,9 +6,11 @@ from src.rag import (
     offline_generate,
     grounding_check,
     recommend_rag,
+    load_artist_notes,
     VibeQuery,
 )
 from src.reliability import run_reliability, THRESHOLDS
+from src.evaluate import run_eval, confidence, PASS_RATE_THRESHOLD
 
 
 def _catalog():
@@ -114,3 +116,55 @@ def test_reliability_meets_thresholds():
         assert report["metrics"][metric] >= threshold, (
             f"{metric} = {report['metrics'][metric]:.2f} < {threshold}"
         )
+
+
+# --- Stretch: RAG enhancement (artist notes as a 2nd source) ------------------
+
+def test_artist_notes_load():
+    notes = load_artist_notes()
+    assert "neon echo" in notes and "loroom" in notes
+    assert "synth" in notes["neon echo"].lower()
+
+
+def test_artist_notes_contain_no_catalog_song_titles():
+    # Safety: notes must never mention a song title, or the grounding guard would
+    # flag a legitimate note as a hallucination.
+    songs = _catalog()
+    titles = [s["title"].lower() for s in songs]
+    blob = " ".join(load_artist_notes().values()).lower()
+    for title in titles:
+        assert title not in blob, f"artist note leaks song title: {title}"
+
+
+def test_notes_enhancement_enriches_answer_and_stays_grounded():
+    songs = _catalog()
+    plain = recommend_rag("chill lofi for studying", songs, use_llm="offline", use_notes=False)
+    enriched = recommend_rag("chill lofi for studying", songs, use_llm="offline", use_notes=True)
+    # Same retrieval, but the enriched answer is longer and cites artist context.
+    assert [s["title"] for s, _, _ in plain.retrieved] == [s["title"] for s, _, _ in enriched.retrieved]
+    assert enriched.notes_used  # at least one artist note was retrieved
+    assert len(enriched.answer) > len(plain.answer)
+    assert "About" in enriched.answer
+    # Grounding still holds with notes on.
+    grounded, hallucinated = grounding_check(enriched.answer, enriched.retrieved, songs)
+    assert grounded is True and hallucinated == []
+
+
+# --- Stretch: evaluation harness ----------------------------------------------
+
+def test_confidence_is_bounded():
+    songs = _catalog()
+    r = recommend_rag("intense rock, popular hits", songs, use_llm="offline")
+    c = confidence(r.retrieved)
+    assert 0.0 <= c <= 1.0
+    assert confidence([]) == 0.0
+
+
+def test_evaluation_harness_passes():
+    songs = _catalog()
+    report = run_eval(songs)
+    assert report["pass_rate"] >= PASS_RATE_THRESHOLD
+    assert 0.0 <= report["avg_confidence"] <= 1.0
+    for row in report["rows"]:
+        assert 0.0 <= row["confidence"] <= 1.0
+        assert row["result"] in ("PASS", "FAIL")

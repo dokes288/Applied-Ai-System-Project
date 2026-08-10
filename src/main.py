@@ -17,7 +17,12 @@ AI features:
                                        # natural-language RAG recommendation
                                        # (uses Claude when ANTHROPIC_API_KEY is
                                        #  set; deterministic offline path otherwise)
+    python -m src.main ask "..." --notes
+                                       # RAG enhancement: also ground the answer
+                                       #  in the artist-notes second data source
     python -m src.main reliability     # run the reliability/quality gate
+    python -m src.main evaluate        # run the evaluation harness (predefined
+                                       #  inputs, confidence ratings, pass/fail)
 """
 
 import logging
@@ -256,6 +261,10 @@ def print_rag_result(result) -> None:
     print("\nRetrieved (content-based engine):")
     for rank, (song, score, _reasons) in enumerate(result.retrieved, start=1):
         print(f"  {rank}. {song['title']} — {song['artist']} [{song['genre']}]  ({score:.2f})")
+    if result.notes_used:
+        print("\nArtist notes used (2nd retrieval source):")
+        for artist, note in result.notes_used.items():
+            print(f"  - {artist}: {note}")
     print(f"\nRecommendation ({result.generate_engine}):")
     for line in textwrap.wrap(result.answer, 76) or [result.answer]:
         print(f"  {line}")
@@ -273,14 +282,23 @@ def main() -> None:
 
     # AI feature 1 — RAG: natural-language request. Everything after "ask" is
     # the query, so it can contain spaces without quoting on some shells.
+    # An optional `--notes` flag turns on the artist-notes second source.
     if len(sys.argv) >= 2 and sys.argv[1].strip().lower() == "ask":
         from src.rag import recommend_rag
-        query = " ".join(sys.argv[2:]).strip()
+        rest = sys.argv[2:]
+        use_notes = "--notes" in rest
+        query = " ".join(a for a in rest if a != "--notes").strip()
         if not query:
-            print('Usage: python -m src.main ask "your request in plain English"')
+            print('Usage: python -m src.main ask "your request in plain English" [--notes]')
             return
         songs = load_songs("data/songs.csv")
-        print_rag_result(recommend_rag(query, songs, k=5))
+        print_rag_result(recommend_rag(query, songs, k=5, use_notes=use_notes))
+        return
+
+    # Stretch — evaluation harness: run a predefined input set, print a summary.
+    if len(sys.argv) >= 2 and sys.argv[1].strip().lower() == "evaluate":
+        from src.evaluate import main as evaluate_main
+        evaluate_main()
         return
 
     # AI feature 2 — reliability/quality gate. Exits non-zero on regression.

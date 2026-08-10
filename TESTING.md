@@ -12,7 +12,7 @@ runnable by anyone with no API key (deterministic offline path):
 
 ## Summary
 
-> **32 of 32 automated tests pass. Manual evaluation: 6 of 6 inputs handled
+> **37 of 37 automated tests pass. Manual evaluation: 6 of 6 inputs handled
 > correctly, including empty and off-catalog edge cases. The reliability harness
 > reports 1.00 on all 5 metrics.** Testing caught one real bug — the offline
 > parser matched the genre "pop" inside the word "popular", so *"intense rock …
@@ -25,7 +25,7 @@ runnable by anyone with no API key (deterministic offline path):
 Reproduce everything:
 
 ```bash
-pytest -q                        # 32 passed
+pytest -q                        # 37 passed
 python -m src.main reliability   # all metrics 1.00, RESULT: PASS (exit 0)
 ```
 
@@ -34,8 +34,8 @@ python -m src.main reliability   # all metrics 1.00, RESULT: PASS (exit 0)
 | Suite | Tests | Result |
 |-------|------:|--------|
 | `tests/test_recommender.py` (scoring, modes, diversity, advanced features) | 21 | Pass |
-| `tests/test_rag.py` (parsing, retrieval, grounding, determinism, reliability) | 11 | Pass |
-| **Total** | **32** | **Pass** |
+| `tests/test_rag.py` (parsing, retrieval, grounding, determinism, reliability) | 16 | Pass |
+| **Total** | **37** | **Pass** |
 
 ## 2. Reliability metrics (`python -m src.main reliability`)
 
@@ -77,7 +77,7 @@ criteria. Results are real and reproducible.
 
 ```json
 {
-  "automated_tests": { "passed": 32, "total": 32 },
+  "automated_tests": { "passed": 37, "total": 37 },
   "reliability_metrics": {
     "parse_determinism": 1.0,
     "parse_accuracy": 1.0,

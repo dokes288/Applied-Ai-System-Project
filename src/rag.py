@@ -49,6 +49,10 @@ logger = logging.getLogger("vibematch.rag")
 # flagship (see the claude-api reference); adaptive thinking is on by default.
 DEFAULT_MODEL = os.environ.get("VIBEMATCH_MODEL", "claude-opus-5")
 
+# Second retrieval source (RAG enhancement): a custom document of per-artist
+# context, separate from the structured song catalog in data/songs.csv.
+ARTIST_NOTES_PATH = os.environ.get("VIBEMATCH_ARTIST_NOTES", "data/artist_notes.md")
+
 # --- Catalog vocabulary used by the offline parser and the grounding guard ---
 KNOWN_GENRES = ["indie pop", "pop", "lofi", "rock", "ambient", "jazz", "synthwave", "metal"]
 KNOWN_MOODS = ["happy", "chill", "intense", "relaxed", "moody", "focused", "angry", "sad"]
@@ -101,6 +105,7 @@ class RagResult:
     parse_engine: str          # "claude" or "offline"
     generate_engine: str       # "claude" or "offline"
     warnings: List[str] = field(default_factory=list)
+    notes_used: Dict[str, str] = field(default_factory=dict)  # artist -> note (RAG enhancement)
 
     def profile_dict(self) -> Dict:
         return asdict(self.profile)
@@ -164,6 +169,42 @@ def _validate_profile(profile: VibeQuery) -> VibeQuery:
         if not profile.desired_mood_tags:
             profile.desired_mood_tags = None
     return profile
+
+
+# --------------------------------------------------------------------------- #
+# RAG enhancement: second data source (artist notes)                          #
+# --------------------------------------------------------------------------- #
+
+def load_artist_notes(path: str = ARTIST_NOTES_PATH) -> Dict[str, str]:
+    """Load the custom artist-notes document into {artist_lower: note}.
+
+    This is a SECOND retrieval source alongside data/songs.csv — an unstructured
+    markdown document of per-artist context. Lines look like:
+        - **Neon Echo** — A synth-pop duo with glossy 1980s production...
+    Missing file returns an empty dict (the pipeline then behaves as before)."""
+    notes: Dict[str, str] = {}
+    if not os.path.exists(path):
+        return notes
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            m = re.match(r"\s*[-*]\s*\*\*(.+?)\*\*\s*[—:-]\s*(.+)", line)
+            if m:
+                notes[m.group(1).strip().lower()] = m.group(2).strip()
+    return notes
+
+
+def _notes_for_retrieved(
+    retrieved: List[Tuple[Dict, float, str]], all_notes: Dict[str, str]
+) -> Dict[str, str]:
+    """Select the notes for the artists of the retrieved songs (order-preserving,
+    de-duplicated) — the 'retrieval' step for the artist-notes source."""
+    selected: Dict[str, str] = {}
+    for song, _score, _reasons in retrieved:
+        artist = song.get("artist", "")
+        note = all_notes.get(artist.strip().lower())
+        if note and artist not in selected:
+            selected[artist] = note
+    return selected
 
 
 # --------------------------------------------------------------------------- #
@@ -284,8 +325,15 @@ def _format_retrieved(retrieved: List[Tuple[Dict, float, str]]) -> str:
     return "\n".join(lines)
 
 
-def offline_generate(query_text: str, retrieved: List[Tuple[Dict, float, str]]) -> str:
-    """Deterministic, grounded answer built only from the retrieved songs."""
+def offline_generate(
+    query_text: str,
+    retrieved: List[Tuple[Dict, float, str]],
+    notes: Optional[Dict[str, str]] = None,
+) -> str:
+    """Deterministic, grounded answer built only from the retrieved songs.
+
+    When `notes` (the artist-notes source) is supplied, a short artist-context
+    clause for the top pick is appended — the RAG enhancement, offline."""
     if not retrieved:
         return "I could not find anything in the catalog that matches that request."
     top_song, top_score, top_reasons = retrieved[0]
@@ -298,12 +346,25 @@ def offline_generate(query_text: str, retrieved: List[Tuple[Dict, float, str]]) 
     if len(retrieved) > 1:
         also = ", ".join(f"{s['title']} ({sc:.2f})" for s, sc, _ in retrieved[1:3])
         parts.append(f"You might also like {also}.")
+    if notes:
+        top_note = notes.get(top_song["artist"])
+        if top_note:
+            parts.append(f"About {top_song['artist']}: {top_note}")
     return " ".join(parts)
 
 
-def claude_generate(client, query_text: str, retrieved: List[Tuple[Dict, float, str]]) -> str:
+def claude_generate(
+    client,
+    query_text: str,
+    retrieved: List[Tuple[Dict, float, str]],
+    notes: Optional[Dict[str, str]] = None,
+) -> str:
     """Generate a grounded recommendation with Claude, using ONLY the retrieved
-    songs. The retrieved data is the sole source of truth for the answer."""
+    songs. The retrieved data is the sole source of truth for the answer.
+
+    When `notes` is supplied, the per-artist context (the second retrieval
+    source) is added so the model can add background colour while still only
+    recommending retrieved songs."""
     context = _format_retrieved(retrieved)
     system = (
         "You are VibeMatch, a music recommender. Recommend ONLY from the songs "
@@ -313,6 +374,12 @@ def claude_generate(client, query_text: str, retrieved: List[Tuple[Dict, float, 
         "then optionally one or two alternatives. Do not output a list or JSON."
     )
     user = f'Listener request: "{query_text}"\n\nRetrieved songs (the only ones you may recommend):\n{context}'
+    if notes:
+        note_lines = "\n".join(f"- {artist}: {note}" for artist, note in notes.items())
+        user += (
+            "\n\nArtist context (background only — use it to enrich your wording, "
+            "but still recommend ONLY the retrieved songs above):\n" + note_lines
+        )
     response = client.messages.create(
         model=DEFAULT_MODEL,
         max_tokens=1024,
@@ -351,12 +418,20 @@ def grounding_check(answer: str, retrieved: List[Tuple[Dict, float, str]], catal
 # Pipeline                                                                    #
 # --------------------------------------------------------------------------- #
 
-def recommend_rag(query_text: str, songs: List[Dict], k: int = 5, use_llm: str = "auto") -> RagResult:
+def recommend_rag(
+    query_text: str, songs: List[Dict], k: int = 5, use_llm: str = "auto",
+    use_notes: bool = False,
+) -> RagResult:
     """Run the full RAG pipeline.
 
     use_llm: "auto" (live Claude when available, else offline), "offline"
     (force the deterministic path -- used by the reliability harness), or
-    "live" (require Claude; still degrades gracefully on error)."""
+    "live" (require Claude; still degrades gracefully on error).
+
+    use_notes: when True, a SECOND retrieval source (the artist-notes document)
+    is loaded and the notes for the retrieved artists enrich the generation
+    step (the RAG enhancement). Defaults False so baseline behavior is
+    unchanged."""
     warnings: List[str] = []
 
     client = None
@@ -386,12 +461,19 @@ def recommend_rag(query_text: str, songs: List[Dict], k: int = 5, use_llm: str =
     retrieved = recommend_songs(profile.to_prefs(), songs, k=k)
     logger.info("retrieved %d songs: %s", len(retrieved), [s["title"] for s, _, _ in retrieved])
 
-    # 3. GENERATE (grounded in the retrieved songs)
+    # 2b. RETRIEVE from the second source (artist notes), if enabled.
+    notes_used: Dict[str, str] = {}
+    if use_notes:
+        notes_used = _notes_for_retrieved(retrieved, load_artist_notes())
+        logger.info("artist notes retrieved for: %s", list(notes_used))
+
+    # 3. GENERATE (grounded in the retrieved songs; enriched by notes if present)
+    notes_arg = notes_used or None
     generate_engine = "offline"
     answer = ""
     if client is not None:
         try:
-            candidate = claude_generate(client, query_text, retrieved)
+            candidate = claude_generate(client, query_text, retrieved, notes=notes_arg)
             grounded, hallucinated = grounding_check(candidate, retrieved, songs)
             if grounded:
                 answer, generate_engine = candidate, "claude"
@@ -406,7 +488,7 @@ def recommend_rag(query_text: str, songs: List[Dict], k: int = 5, use_llm: str =
             logger.warning("claude_generate failed: %s", exc)
 
     if not answer:
-        answer = offline_generate(query_text, retrieved)
+        answer = offline_generate(query_text, retrieved, notes=notes_arg)
 
     return RagResult(
         query_text=query_text,
@@ -416,4 +498,5 @@ def recommend_rag(query_text: str, songs: List[Dict], k: int = 5, use_llm: str =
         parse_engine=parse_engine,
         generate_engine=generate_engine,
         warnings=warnings,
+        notes_used=notes_used,
     )

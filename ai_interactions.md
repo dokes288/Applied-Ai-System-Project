@@ -220,6 +220,6 @@ profile; `stop_reason == "refusal"` handled by falling back offline.
 - The **grounding guard** works: a unit test feeds an answer naming a
   non-retrieved song and asserts it is flagged as hallucinated.
 - `python -m src.main reliability` → all 5 metrics 1.00, RESULT: PASS, exit 0.
-- Full suite: **32 tests pass** (21 recommender + 11 RAG/reliability).
+- Full suite: **37 tests pass** (21 recommender + 16 RAG/reliability and related tests).
 - The live Claude path activates automatically once `pip install -r
   requirements.txt` runs and `ANTHROPIC_API_KEY` is set — same code, no changes.

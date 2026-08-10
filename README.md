@@ -61,7 +61,8 @@ stages, with automated checks and humans at the edges:
 | **CLI / orchestrator** | `src/main.py` | Entry point; routes `ask`, `reliability`, and the scoring modes |
 | **Retriever** | `src/recommender.py` + `data/songs.csv` | Content-based scorer: score → sort → explain; returns top-k songs **with reason strings** |
 | **RAG pipeline (the "agent" steps)** | `src/rag.py` | Parse free text → retrieve → generate a grounded answer; Claude (`claude-opus-5`) live or a deterministic offline implementation |
-| **Evaluator / tester** | `src/reliability.py`, `tests/` | Metrics + pass/fail gate; `pytest` unit tests |
+| **Evaluator / tester** | `src/reliability.py`, `src/evaluate.py`, `tests/` | Reliability gate + evaluation harness (confidence + pass/fail); `pytest` unit tests |
+| **2nd retrieval source** | `data/artist_notes.md` | Custom per-artist document that enriches generation (RAG enhancement) |
 
 **Where AI results are checked** (🛡️ automated, 👤 human): a **profile guardrail**
 validates/clamps the parsed profile before scoring; a **grounding guard** discards
@@ -113,6 +114,8 @@ python -m src.main                 # the 4 classic demo profiles (baseline recip
 python -m src.main compare         # one profile ranked under all scoring modes
 python -m src.main diversity       # top-5 with vs. without the diversity penalty
 python -m src.main table           # formatted table output (with full reasons)
+python -m src.main ask "..." --notes   # RAG + artist-notes second source (stretch)
+python -m src.main evaluate        # evaluation harness: confidence + pass/fail (stretch)
 ```
 
 ---
@@ -236,8 +239,8 @@ Full detail — the parseable evaluation table (including edge cases), the
 reliability metrics, and machine-readable JSON — is in **[TESTING.md](TESTING.md)**.
 
 **What worked**
-- **32 automated tests pass** (`pytest -q`): 21 for the recommender, 11 for the
-  RAG pipeline and reliability harness.
+- **37 automated tests pass** (`pytest -q`): 21 for the recommender, 16 for the
+  RAG pipeline, reliability harness, and stretch features.
 - **Reliability gate passes at 1.00 on every metric** (`python -m src.main
   reliability`): parse determinism, parse accuracy, retrieval precision@1,
   grounding rate, and end-to-end determinism — and it exits non-zero on
