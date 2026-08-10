@@ -11,5 +11,14 @@ venv/
 # OS files
 .DS_Store
 
+# Local environment secrets
+.env
+.env.local
+.env.*
+!.env.example
+
+# VS Code workspace settings
+.vscode/
+
 # Pytest cache
 .pytest_cache/
