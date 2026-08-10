@@ -40,7 +40,7 @@ def test_offline_parse_is_deterministic():
 
 
 def test_indie_pop_matches_before_pop():
-    # The longer genre token must win so "indie pop" isn't captured as "pop".
+    # The longer genre token must win so "indie pop" is not captured as "pop".
     assert offline_parse("something indie pop and happy").genre == "indie pop"
 
 
@@ -83,7 +83,7 @@ def test_grounding_check_flags_a_hallucinated_song():
     retrieved = recommend_songs_stub = [
         (s, 5.0, "reason") for s in songs if s["title"] == "Library Rain"
     ]
-    answer = "You should listen to Storm Runner, it's great."
+    answer = "You should listen to Storm Runner, it is great."
     grounded, hallucinated = grounding_check(answer, retrieved, songs)
     assert grounded is False
     assert "Storm Runner" in hallucinated

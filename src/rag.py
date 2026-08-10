@@ -171,7 +171,7 @@ def _validate_profile(profile: VibeQuery) -> VibeQuery:
 
 def get_client():
     """Return (client, reason). client is None when the live path is unavailable
-    -- either the SDK isn't installed or no API key is configured."""
+    -- either the SDK is not installed or no API key is configured."""
     try:
         import anthropic
     except ImportError:
@@ -283,7 +283,7 @@ def _format_retrieved(retrieved: List[Tuple[Dict, float, str]]) -> str:
 def offline_generate(query_text: str, retrieved: List[Tuple[Dict, float, str]]) -> str:
     """Deterministic, grounded answer built only from the retrieved songs."""
     if not retrieved:
-        return "I couldn't find anything in the catalog that matches that request."
+        return "I could not find anything in the catalog that matches that request."
     top_song, top_score, top_reasons = retrieved[0]
     first_reason = top_reasons.split(" | ")[0] if top_reasons else "it fits your request"
     parts = [
@@ -333,7 +333,7 @@ def grounding_check(answer: str, retrieved: List[Tuple[Dict, float, str]], catal
     The answer is grounded if every catalog song it names was actually
     retrieved. A song title from the full catalog that appears in the answer
     but was NOT in the retrieved set is a hallucination (the model recommended
-    something it wasn't given)."""
+    something it was not given)."""
     retrieved_titles = {song["title"].lower() for song, _, _ in retrieved}
     answer_l = answer.lower()
     hallucinated = [

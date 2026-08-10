@@ -32,9 +32,9 @@ keeping everything that made the original explainable. Two capabilities are new:
 
 **Why it matters:** it demonstrates the two ideas most production AI systems are
 built on — **retrieval-augmented generation** (ground the model in real data so it
-doesn't make things up) and **evaluation** (measure the AI, don't just trust it) —
+does not make things up) and **evaluation** (measure the AI, do not just trust it) —
 in a small, fully reproducible package. Crucially, it runs **with the Claude API
-when a key is present and a deterministic offline fallback when it isn't**, so
+when a key is present and a deterministic offline fallback when it is not**, so
 anyone can clone it and get a working result immediately.
 
 ---
@@ -65,7 +65,7 @@ stages, with automated checks and humans at the edges:
 
 **Where AI results are checked** (🛡️ automated, 👤 human): a **profile guardrail**
 validates/clamps the parsed profile before scoring; a **grounding guard** discards
-any generated answer that names a song that wasn't retrieved; the **reliability
+any generated answer that names a song that was not retrieved; the **reliability
 gate + pytest** block on regressions; and humans (the listener, and the developer
 reviewing the PASS/FAIL report) make the final judgment.
 
@@ -198,15 +198,15 @@ explainability the whole project is built around. (Full four-profile output is i
 
 - **Content-based, not collaborative.** VibeMatch scores songs purely on their own
   attributes. **Trade-off:** it works with zero behavioral data and is fully
-  explainable (great for a portfolio demo and cold-start), but it can't make the
+  explainable (great for a portfolio demo and cold-start), but it cannot make the
   social "people like you also loved…" discoveries a real hybrid system does.
 - **Explainability over cleverness.** Every score is a sum of named, inspectable
   terms, and every recommendation lists its reasons. **Trade-off:** a simple
-  additive model is easy to reason about and audit, but it's blind to signals it
-  doesn't score (valence, tempo) — see Testing Summary.
+  additive model is easy to reason about and audit, but it is blind to signals it
+  does not score (valence, tempo) — see Testing Summary.
 - **RAG grounded in retrieval, not a bare chatbot.** The LLM's answer is
-  constructed *from* the retrieved songs and their real scores; it's told never to
-  mention a song it wasn't given, and a **grounding guard** enforces that at
+  constructed *from* the retrieved songs and their real scores; it is told never to
+  mention a song it was not given, and a **grounding guard** enforces that at
   runtime. **Trade-off:** the answer is factual and on-catalog, at the cost of the
   free-form creativity an ungrounded model would show.
 - **Live LLM + deterministic offline fallback.** Both AI steps use Claude when a
@@ -238,13 +238,13 @@ continuous score — documented in
 - **Reliability gate passes at 1.00 on every metric** (`python -m src.main
   reliability`): parse determinism, parse accuracy, retrieval precision@1,
   grounding rate, and end-to-end determinism — and it exits non-zero on
-  regression, so it's CI-ready.
+  regression, so it is CI-ready.
 - The **offline path** was verified end-to-end (this environment has no API key),
   proving the reproducibility guarantee holds.
 - The **grounding guard** is tested directly: a crafted answer naming a
   non-retrieved song is correctly flagged as a hallucination and discarded.
 
-**What didn't work at first / what I had to fix**
+**What did not work at first / what I had to fix**
 - An early energy term could go **negative** on out-of-range input and cancel the
   genre/mood match; fixed by clamping the target to `[0,1]` and flooring the term
   at 0 (covered by a regression test).
@@ -257,7 +257,7 @@ continuous score — documented in
 **What I learned**
 - The model is **only as good as the signals it scores.** A "metal, angry"
   request surfaces upbeat pop, because the scorer ignores valence (dark vs.
-  bright) and tempo — the exact features that define the genre. Weighting can't
+  bright) and tempo — the exact features that define the genre. Weighting cannot
   fix a missing signal.
 - For anything with an LLM, **a guardrail plus a measurement harness matters as
   much as the feature itself** — the grounding guard and reliability gate are what
@@ -314,7 +314,7 @@ max possible score = 6.0 (prefers_popular = None) / 7.0 (popularity preference s
 ascending, for determinism) → return the top `k` → attach an explanation built
 from the reasons that earned points. Genre outweighs mood 2:1 (genre is the
 primary style filter); energy and acoustic fit are continuous distance terms, so
-there's no "dead zone" where a near-match earns nothing.
+there is no "dead zone" where a near-match earns nothing.
 
 ### Song features
 
@@ -330,7 +330,7 @@ there's no "dead zone" where a near-match earns nothing.
 
 ## Reference: Advanced Features, Scoring Modes & Diversity
 
-All three layers are **opt-in and backward-compatible** — a request that doesn't
+All three layers are **opt-in and backward-compatible** — a request that does not
 use them scores exactly as the baseline does.
 
 **Advanced song features** (scored only when the request supplies the matching preference):
@@ -349,7 +349,7 @@ use them scores exactly as the baseline does.
 
 **Diversity / fairness penalty** (`python -m src.main diversity`): a re-ranking
 step that subtracts **−1.5** per already-listed same-artist song and **−0.75** per
-same-genre song, so one artist or genre can't monopolize the top-k.
+same-genre song, so one artist or genre cannot monopolize the top-k.
 
 ## Reference: AI Features in depth (RAG + Reliability)
 
@@ -447,14 +447,14 @@ content-based — one honest slice of that stack, made fully explainable.
 | Genre/mood matching: substring vs. strict equality | Substring let "indie pop" credit against "pop" (*Rooftop Lights* 4.92); strict equality dropped it to 2.92 — matching validated behavior. |
 | Acoustic term: hard threshold vs. continuous | The threshold left a 0.3–0.7 dead zone; the continuous term makes every value contribute proportionally. |
 | No tie-break vs. tie-break by title | Added `(-score, title)` so equal scores resolve identically every run. |
-| Doubling energy weight (sensitivity test) | Reshuffled half the profiles but didn't fix the "metal → pop" problem — proof that weighting can't replace a missing signal (valence/tempo). |
+| Doubling energy weight (sensitivity test) | Reshuffled half the profiles but did not fix the "metal → pop" problem — proof that weighting cannot replace a missing signal (valence/tempo). |
 
 ## Limitations and Risks
 
 - **Tiny catalog** — 10 handcrafted songs; no long-tail discovery.
 - **No behavioral data** — no skips, repeats, or "people like you" signals.
 - **Blind to some signals** — valence, tempo, and danceability are loaded but not
-  scored, so mood color and intensity don't register.
+  scored, so mood color and intensity do not register.
 - **Feature/representation bias** — over-weighting genre/mood, and a small curated
   dataset, can hide adjacent-genre matches and underrepresent artists or regions.
 - **Filter-bubble risk** — even simple rules can reinforce existing taste.

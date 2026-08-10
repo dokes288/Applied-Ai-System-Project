@@ -30,7 +30,7 @@ Main prompt:
 Follow-up guidance I gave during the work:
 
 - "Make the new signals opt-in so the documented baseline output and existing
-  tests don't change unless a profile actually asks for them."
+  tests do not change unless a profile actually asks for them."
 - "Verify the math stays valid and run the tests before committing."
 
 **What did the agent generate or change?**
@@ -97,7 +97,7 @@ Things I had to watch for / correct:
 - `load_songs()` needed **fallbacks** for missing columns so an older CSV still
   loads.
 - I double-checked that the agent passed the new fields through
-  `Recommender._score_song` — it's easy to add a field to `score_song()` and
+  `Recommender._score_song` — it is easy to add a field to `score_song()` and
   forget the OOP path, which would silently ignore the new features. Both paths
   return the same score for the same profile.
 
@@ -218,7 +218,7 @@ profile; `stop_reason == "refusal"` handled by falling back offline.
   and retrieves *Night Drive Loop* (the 80s synthwave track) as #1, with a
   grounded answer naming it.
 - The **grounding guard** works: a unit test feeds an answer naming a
-  non-retrieved song and asserts it's flagged as hallucinated.
+  non-retrieved song and asserts it is flagged as hallucinated.
 - `python -m src.main reliability` → all 5 metrics 1.00, RESULT: PASS, exit 0.
 - Full suite: **31 tests pass** (21 recommender + 10 RAG/reliability).
 - The live Claude path activates automatically once `pip install -r

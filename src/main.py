@@ -33,7 +33,7 @@ from src.recommender import (
     ScoringStrategy,
 )
 
-# Use `tabulate` if it's installed for a nicely-formatted grid; otherwise fall
+# Use `tabulate` if it is installed for a nicely-formatted grid; otherwise fall
 # back to a self-contained ASCII renderer so the table works with no extra
 # dependency. (tabulate ships transitively with pandas/streamlit here.)
 try:

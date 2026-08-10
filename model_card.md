@@ -46,8 +46,8 @@ A song can earn points from four things (plus one optional one):
 - **Genre — up to 2 points.** The song gets 2 points only if its genre is the exact word you picked. "pop" does not count for "indie pop". No match means 0.
 - **Mood — up to 1 point.** Same idea: 1 point only for an exact mood match, else 0.
 - **Energy — up to 2 points.** The closer the song's energy is to your target energy, the more points. A perfect match gets the full 2. A big gap gets close to 0.
-- **Acoustic feel — up to 1 point.** If you like acoustic music, acoustic songs score high. If you don't, electronic songs score high. The closer the fit, the more points.
-- **Popularity — optional, up to 1 point.** Off by default. If you say you want popular songs, a popular song adds 1 point. If you say you want niche songs, an obscure song adds 0.75. If you don't state a preference, this adds nothing.
+- **Acoustic feel — up to 1 point.** If you like acoustic music, acoustic songs score high. If you do not, electronic songs score high. The closer the fit, the more points.
+- **Popularity — optional, up to 1 point.** Off by default. If you say you want popular songs, a popular song adds 1 point. If you say you want niche songs, an obscure song adds 0.75. If you do not state a preference, this adds nothing.
 
 The most a song can score is 6 points normally, or 7 if you turn on the popularity preference.
 
@@ -139,7 +139,7 @@ answer is made of, not decoration next to a generic reply. Run it with
 `python -m src.main ask "your request"`.
 
 Safety nets: the profile is checked and cleaned before scoring; a **grounding
-guard** throws away any AI answer that names a song that wasn't actually found;
+guard** throws away any AI answer that names a song that was not actually found;
 and any AI error falls back to the offline path instead of crashing. Every step
 is logged.
 
@@ -440,6 +440,37 @@ If we kept building VibeMatch, we would start here:
 ---
 
 ## Personal Reflection
+
+### Responsible-AI reflection
+
+**How I collaborated with AI.** I used an AI agent to build the AI features
+themselves — drafting the RAG pipeline, the reliability harness, and the docs —
+then verified everything by running it (`pytest`, real `ask` and `reliability`
+runs) rather than trusting the explanation. My working rule was simple: AI
+drafts, and the code and its actual output decide.
+
+**One helpful suggestion.** It proposed a *grounding guard* — checking that the
+generated recommendation only names songs that were actually retrieved, and
+discarding the answer if it does not. That turned "the model might make up a
+song" from a worry into an enforced, tested guarantee, and it is one of the parts
+of the project I trust most.
+
+**One flawed suggestion.** It first proposed wiring the `prefers_popular`
+preference into scoring — but the song file had no popularity column, so the
+"fix" would have silently done nothing. Running it exposed the gap, and I added
+real data before the feature meant anything. (It also handed me a terminal
+command that broke on quote characters.) Both are why I verify against real runs
+instead of taking the explanation at face value.
+
+**The system's limitations.** The recommender is blind to signals it does not
+score (valence, tempo), so a "metal, angry" request still surfaces upbeat pop.
+The catalog is only 10 songs, so the RAG feature can only ever recommend from a
+tiny pool. The grounding guard catches hallucinated *catalog names* but not a
+subtly wrong *claim* about a real song. And without an API key the "AI" is a
+deterministic fallback, not a real model — good for reproducibility, but not the
+same system a user with a key experiences.
+
+### Broader reflection
 
 **My biggest learning moment.** The scoring rules are design choices, not facts. Small changes moved the results in ways I did not expect. Doubling the energy weight was supposed to help the metal fan. Instead it handed the top spot to a cheerful pop song. That taught me that a recommender is only as good as the signals it looks at. If it never reads the "feel" of a song, no weighting can fix that.
 

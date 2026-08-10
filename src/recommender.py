@@ -16,7 +16,7 @@ WEIGHT_POPULARITY_MATCH = 1.0       # user prefers popular tracks, song clears t
 WEIGHT_POPULARITY_NON_MATCH = 0.75   # user prefers niche/under-the-radar tracks, song is obscure enough
 
 # --- Advanced feature weights (all OPT-IN: only scored when the user profile
-# supplies the matching preference key, so profiles that don't set them keep
+# supplies the matching preference key, so profiles that do not set them keep
 # their original scores). See score_song() for the exact rules. ---------------
 WEIGHT_MOOD_TAGS = 1.0        # scaled by the fraction of desired detailed tags a song carries
 WEIGHT_DECADE_EXACT = 1.0     # song.release_decade == preferred_decade
@@ -137,7 +137,7 @@ class UserProfile:
     preferred_decade: Optional[int] = None           # e.g. 2010; scores by distance in decades
     preferred_language: Optional[str] = None         # e.g. "english"; exact-match bonus
     target_instrumentalness: Optional[float] = None  # 0.0-1.0; continuous similarity bonus
-    allow_explicit: Optional[bool] = None            # False = penalize explicit tracks; None = don't care
+    allow_explicit: Optional[bool] = None            # False = penalize explicit tracks; None = do not care
 
 
 class Recommender:
@@ -302,7 +302,7 @@ def score_song(user_prefs: Dict, song: Dict, strategy: ScoringStrategy = BALANCE
     Acoustic fit is a continuous similarity term, same style as energy
     (not a hard threshold like the original 7-component formula's
     acoustic term -- that version left a 0.3-0.7 acousticness dead zone
-    earning nothing in either direction, which didn't fit a from-scratch
+    earning nothing in either direction, which did not fit a from-scratch
     recipe built around continuous distance rather than ported gates):
         target_acousticness = 1.0 if likes_acoustic else 0.0
         acoustic_similarity  = 1.0 * (1 - |acousticness - target_acousticness|)
@@ -313,7 +313,7 @@ def score_song(user_prefs: Dict, song: Dict, strategy: ScoringStrategy = BALANCE
     OOP and functional paths agree on both scores and rankings for the
     same profile/catalog. _compute_score() (the full 7-component
     weighted formula: genre 3.5, mood 3.0, energy 2.5, ...) is no longer
-    called by either path -- it's left in place, unused, in case
+    called by either path -- it is left in place, unused, in case
     external code still references it directly.
 
     Required by recommend_songs() and src/main.py
@@ -325,7 +325,7 @@ def score_song(user_prefs: Dict, song: Dict, strategy: ScoringStrategy = BALANCE
         target_energy = user_prefs.get("target_energy", 0.5)
     target_energy = float(target_energy)
     # Clamp to the valid [0, 1] domain so an out-of-range target (e.g. energy
-    # accidentally passed on a 0-100 scale) can't push energy_similarity
+    # accidentally passed on a 0-100 scale) cannot push energy_similarity
     # negative and quietly cancel out the genre/mood gates.
     target_energy = min(1.0, max(0.0, target_energy))
     likes_acoustic = bool(user_prefs.get("likes_acoustic", False))
@@ -470,7 +470,7 @@ def _select_diverse(
 
     Because penalties grow with each same-artist/same-genre pick already made,
     a second song by an artist already in the list must be clearly better than
-    the alternatives to earn its slot -- so one artist or genre can't dominate.
+    the alternatives to earn its slot -- so one artist or genre cannot dominate.
 
     Returns (song, effective_score, reasons) triples, with a diversity note
     appended to the reasons of any pick that was penalized.
