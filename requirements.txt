@@ -2,3 +2,4 @@ pandas
 pytest
 streamlit
 tabulate  # optional: nicer table output in `python -m src.main table` (ASCII fallback if absent)
+anthropic  # optional: enables the live Claude RAG path; offline fallback runs without it

@@ -116,6 +116,44 @@ available and falls back to a plain-ASCII table otherwise.
 
 ---
 
+## AI Features: RAG and Reliability
+
+The plain recommender takes a hand-written profile. Two AI features change how
+the system is used and checked. Both use the Claude API when a key is present and
+a deterministic offline path when it is not, so the project runs the same way for
+anyone.
+
+### Natural-language requests (RAG)
+
+You can ask in plain English — "nostalgic 80s synthwave, nothing explicit" —
+instead of filling in a profile. The system:
+
+1. Uses an AI model to turn your words into a profile (this is the search query).
+2. Runs the normal recommender to find the best songs and their reasons (this is
+   the retrieval).
+3. Uses an AI model to write a short recommendation that is built **only** from
+   those found songs and their scores (this is the grounded generation).
+
+This is real "retrieval-augmented generation": the found songs are what the
+answer is made of, not decoration next to a generic reply. Run it with
+`python -m src.main ask "your request"`.
+
+Safety nets: the profile is checked and cleaned before scoring; a **grounding
+guard** throws away any AI answer that names a song that wasn't actually found;
+and any AI error falls back to the offline path instead of crashing. Every step
+is logged.
+
+### Reliability check
+
+`python -m src.main reliability` runs a set of labeled test requests and scores
+the system on five things: does it parse the same request the same way twice, does
+it parse fields correctly, does it retrieve the right genre first, does it stay
+grounded, and does it give the same final answer twice. If any score drops below
+its target, the command fails — a simple quality gate. Current run: all five at
+1.00, PASS.
+
+---
+
 ## Observed Behavior / Biases
 
 We noticed several clear patterns. They are not bugs. They come straight from the simple rules.

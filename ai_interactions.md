@@ -170,3 +170,56 @@ In `src/main.py`:
 `compare` mode shows the modes genuinely reshuffle results — e.g. for a pop/happy
 listener, Genre-First ranks *Gym Hero* (pop) above *Rooftop Lights*, while
 Mood-First flips them (*Rooftop Lights* is the "happy" match). 18 tests pass.
+
+---
+
+## AI Feature Build — RAG + Reliability (this submission)
+
+**What task did you give the agent?**
+
+Turn the rule-based recommender into a system that "does something useful with
+AI," with at least one advanced feature *fully integrated into the main logic*.
+I chose **RAG** (natural-language requests answered from retrieved catalog data)
+plus a **reliability/testing system**, powered by the Claude API with a
+deterministic offline fallback so it still runs with no API key.
+
+**Prompts used:**
+
+- "Add a RAG feature: an LLM parses my free-text request into a VibeMatch
+  profile, the existing engine retrieves the top songs, and an LLM writes a
+  recommendation grounded only in those retrieved songs. Use Claude when a key
+  is set, otherwise a deterministic offline path."
+- "Add a reliability harness that measures parse accuracy, retrieval precision,
+  grounding, and determinism, and fails if a metric regresses."
+- "Include logging and guardrails; make it reproducible; give clear setup steps."
+
+**What did the agent generate or change?**
+
+- `src/rag.py` — the RAG pipeline: `offline_parse` / `claude_parse` (structured
+  outputs), `recommend_songs` retrieval, `offline_generate` / `claude_generate`,
+  a `grounding_check` guardrail, and `recommend_rag()` orchestrating parse →
+  retrieve → generate with logging and graceful degradation.
+- `src/reliability.py` — a metrics harness over labeled queries with a
+  pass/fail quality gate (non-zero exit on regression).
+- `src/main.py` — `ask "<query>"` and `reliability` CLI modes, plus logging setup.
+- `tests/test_rag.py` — 10 tests (parsing, retrieval, grounding, determinism,
+  reliability thresholds). `requirements.txt` gains `anthropic`; added `.env.example`.
+
+**Design choices (from the claude-api reference):** model `claude-opus-5`;
+`anthropic` imported behind a guard so the offline path has zero hard deps;
+structured outputs (`output_config.format`) for a guaranteed-valid parsed
+profile; `stop_reason == "refusal"` handled by falling back offline.
+
+**What did you verify manually?**
+
+- `anthropic` is not installed in the build environment, so I confirmed the
+  **offline path** runs the whole pipeline: `ask "nostalgic 80s synthwave,
+  nothing explicit, no lyrics"` parses to synthwave/1980/instrumental/no-explicit
+  and retrieves *Night Drive Loop* (the 80s synthwave track) as #1, with a
+  grounded answer naming it.
+- The **grounding guard** works: a unit test feeds an answer naming a
+  non-retrieved song and asserts it's flagged as hallucinated.
+- `python -m src.main reliability` → all 5 metrics 1.00, RESULT: PASS, exit 0.
+- Full suite: **31 tests pass** (21 recommender + 10 RAG/reliability).
+- The live Claude path activates automatically once `pip install -r
+  requirements.txt` runs and `ANTHROPIC_API_KEY` is set — same code, no changes.

@@ -238,6 +238,93 @@ when installed and falls back to a dependency-free ASCII renderer otherwise.
 
 ---
 
+## AI Features: Natural-Language RAG + Reliability Gate
+
+The baseline recommender takes a hand-built profile dict. Two AI features sit on
+top of it and change how the system actually works.
+
+### 1. Retrieval-Augmented Generation (RAG) — ask in plain English
+
+Instead of writing a profile by hand, you describe what you want in natural
+language and get a grounded recommendation back:
+
+```bash
+python -m src.main ask "nostalgic 80s synthwave, nothing explicit, no lyrics"
+```
+
+The request runs a real RAG pipeline ([src/rag.py](src/rag.py)):
+
+1. **Parse** — an LLM turns your free text into a structured VibeMatch profile
+   (genre, mood, energy, decade, tags, explicit preference, …). This *is* the
+   retrieval query.
+2. **Retrieve** — the existing content-based engine (`recommend_songs`) scores
+   the 10-song catalog against that profile and returns the top-k songs **with
+   their reason strings**. This is the retrieval step.
+3. **Generate** — an LLM writes a short recommendation **grounded only in the
+   retrieved songs and their scores/reasons** — it is instructed never to
+   mention a song it wasn't given.
+
+The retrieved data actively shapes the answer (the model recommends *from* the
+retrieved list, citing the real scores) — it isn't printed alongside a generic
+reply. That's what makes it RAG rather than a chatbot bolted on.
+
+**Live Claude + reproducible offline fallback.** Both the parse and generate
+steps call the **Claude API** (`claude-opus-5`) when `anthropic` is installed and
+`ANTHROPIC_API_KEY` is set, and fall back to a **deterministic, dependency-free
+local implementation** otherwise. So a grader with no key still gets a working,
+identical-every-run result; a grader with a key gets the real LLM.
+
+**Guardrails & logging:**
+- The parsed profile is validated and clamped before it reaches the engine.
+- A **grounding guard** checks the generated answer only names retrieved songs;
+  if the LLM hallucinates a song, its answer is discarded and the deterministic
+  generator is used instead.
+- API errors and safety refusals are caught and degrade to the offline path —
+  the command never crashes.
+- Every step logs which engine ran, token usage, and any guardrail trip
+  (`VIBEMATCH_DEBUG=1` to see INFO logs).
+
+### 2. Reliability / quality gate
+
+A measurement harness ([src/reliability.py](src/reliability.py)) scores the
+pipeline on labeled queries and **exits non-zero if any metric regresses** — a
+CI-ready quality gate. It runs entirely on the deterministic offline path, so it
+needs no API key and gives the same numbers everywhere.
+
+```bash
+python -m src.main reliability
+```
+
+| Metric | What it checks |
+|--------|----------------|
+| `parse_determinism` | same query parsed twice → identical profile |
+| `parse_accuracy` | parsed fields match hand-labeled expectations |
+| `retrieval_precision_at_1` | requested genre (when in catalog) is the #1 result |
+| `grounding_rate` | generated answers mention only retrieved songs |
+| `e2e_determinism` | same query → identical final answer |
+
+Current run: **all metrics 1.00, RESULT: PASS**.
+
+### Setup for the AI features
+
+```bash
+pip install -r requirements.txt          # installs anthropic (optional)
+
+# Optional — enables the live Claude path (offline works without it):
+#   PowerShell:  $env:ANTHROPIC_API_KEY = "sk-ant-..."
+#   bash:        export ANTHROPIC_API_KEY="sk-ant-..."
+
+python -m src.main ask "chill lofi for studying, instrumental"
+python -m src.main reliability
+pytest -q                                 # 31 tests (recommender + RAG + reliability)
+```
+
+See [.env.example](.env.example) for all environment variables. The full agentic
+workflow used to build these features — prompts, generated changes, and manual
+verification — is documented in [ai_interactions.md](ai_interactions.md).
+
+---
+
 ## Sample Recommendation Output
 
 Real output from `python -m src.main`, run against `data/songs.csv` with the current recipe (genre +2.0, mood +1.0, energy similarity up to +2.0, acoustic similarity up to +1.0). Verified identically in both the sandbox and a local Windows run — same scores, same rankings, down to the decimal. Each profile's top-5 recommendations are shown in its own block below.

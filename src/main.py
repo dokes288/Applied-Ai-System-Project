@@ -11,8 +11,17 @@ Scoring modes (Strategy pattern):
     python -m src.main compare         # show one profile ranked by ALL modes
     python -m src.main diversity       # show top-5 with vs without the diversity penalty
     python -m src.main table           # show each profile's top-5 as a formatted table
+
+AI features:
+    python -m src.main ask "nostalgic 80s synthwave, nothing explicit"
+                                       # natural-language RAG recommendation
+                                       # (uses Claude when ANTHROPIC_API_KEY is
+                                       #  set; deterministic offline path otherwise)
+    python -m src.main reliability     # run the reliability/quality gate
 """
 
+import logging
+import os
 import sys
 import textwrap
 
@@ -232,12 +241,54 @@ def _select_mode(argv: list) -> str:
     arg = argv[1].strip().lower()
     if arg in ("compare", "diversity", "table") or arg in STRATEGIES:
         return arg
-    print(f"Unknown mode '{argv[1]}'. Options: {', '.join(STRATEGIES)}, compare, diversity, table.")
+    print(f"Unknown mode '{argv[1]}'. Options: {', '.join(STRATEGIES)}, compare, diversity, table, ask, reliability.")
     print("Falling back to 'balanced'.")
     return "balanced"
 
 
+def print_rag_result(result) -> None:
+    """Pretty-print a RAG pipeline result: parsed profile, retrieved songs, and
+    the grounded natural-language answer."""
+    prefs = {k: v for k, v in result.profile.to_prefs().items() if v not in ("", None)}
+    _banner("VIBEMATCH — NATURAL LANGUAGE REQUEST")
+    print(f'\nYou asked: "{result.query_text}"')
+    print(f"\nParsed profile ({result.parse_engine}): {prefs}")
+    print("\nRetrieved (content-based engine):")
+    for rank, (song, score, _reasons) in enumerate(result.retrieved, start=1):
+        print(f"  {rank}. {song['title']} — {song['artist']} [{song['genre']}]  ({score:.2f})")
+    print(f"\nRecommendation ({result.generate_engine}):")
+    for line in textwrap.wrap(result.answer, 76) or [result.answer]:
+        print(f"  {line}")
+    if result.warnings:
+        print("\nGuardrail notes:")
+        for w in result.warnings:
+            print(f"  - {w}")
+
+
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO if os.environ.get("VIBEMATCH_DEBUG") else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    # AI feature 1 — RAG: natural-language request. Everything after "ask" is
+    # the query, so it can contain spaces without quoting on some shells.
+    if len(sys.argv) >= 2 and sys.argv[1].strip().lower() == "ask":
+        from src.rag import recommend_rag
+        query = " ".join(sys.argv[2:]).strip()
+        if not query:
+            print('Usage: python -m src.main ask "your request in plain English"')
+            return
+        songs = load_songs("data/songs.csv")
+        print_rag_result(recommend_rag(query, songs, k=5))
+        return
+
+    # AI feature 2 — reliability/quality gate. Exits non-zero on regression.
+    if len(sys.argv) >= 2 and sys.argv[1].strip().lower() == "reliability":
+        from src.reliability import main as reliability_main
+        reliability_main()
+        return
+
     songs = load_songs("data/songs.csv")
     mode = _select_mode(sys.argv)
 
