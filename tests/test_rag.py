@@ -44,6 +44,14 @@ def test_indie_pop_matches_before_pop():
     assert offline_parse("something indie pop and happy").genre == "indie pop"
 
 
+def test_word_boundary_pop_not_matched_inside_popular():
+    # Regression: "popular" must NOT be parsed as genre "pop"; "rock" should win,
+    # and "popular" should still set the popularity preference.
+    q = offline_parse("intense rock for a workout, popular hits")
+    assert q.genre == "rock"
+    assert q.prefers_popular is True
+
+
 # --- Retrieval + end-to-end ---------------------------------------------------
 
 def test_rag_offline_pipeline_retrieves_and_answers():

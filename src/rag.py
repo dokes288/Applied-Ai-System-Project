@@ -39,6 +39,7 @@ from typing import List, Dict, Optional, Tuple
 import json
 import logging
 import os
+import re
 
 from src.recommender import recommend_songs
 
@@ -194,16 +195,19 @@ def offline_parse(text: str) -> VibeQuery:
     t = f" {text.lower()} "
     q = VibeQuery()
 
-    for genre in KNOWN_GENRES:  # 'indie pop' before 'pop' so the longer match wins
-        if genre in t:
+    # Whole-word matching so a genre/mood/tag is not caught inside another word
+    # (e.g. "pop" must not match inside "popular", "sad" not inside "sadness").
+    # 'indie pop' is checked before 'pop' so the longer phrase wins.
+    for genre in KNOWN_GENRES:
+        if re.search(rf"\b{re.escape(genre)}\b", t):
             q.genre = genre
             break
     for mood in KNOWN_MOODS:
-        if mood in t:
+        if re.search(rf"\b{re.escape(mood)}\b", t):
             q.mood = mood
             break
 
-    tags = [tag for tag in KNOWN_TAGS if tag in t]
+    tags = [tag for tag in KNOWN_TAGS if re.search(rf"\b{re.escape(tag)}\b", t)]
     if tags:
         q.desired_mood_tags = tags
 

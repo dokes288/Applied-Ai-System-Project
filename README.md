@@ -232,19 +232,28 @@ continuous score — documented in
 
 ## Testing Summary
 
+Full detail — the parseable evaluation table (including edge cases), the
+reliability metrics, and machine-readable JSON — is in **[TESTING.md](TESTING.md)**.
+
 **What worked**
-- **31 automated tests pass** (`pytest -q`): 21 for the recommender, 10 for the
+- **32 automated tests pass** (`pytest -q`): 21 for the recommender, 11 for the
   RAG pipeline and reliability harness.
 - **Reliability gate passes at 1.00 on every metric** (`python -m src.main
   reliability`): parse determinism, parse accuracy, retrieval precision@1,
   grounding rate, and end-to-end determinism — and it exits non-zero on
   regression, so it is CI-ready.
+- **Manual evaluation: 6 of 6 inputs handled correctly**, including empty input
+  (prints usage, exits 0) and an off-catalog request (graceful degradation, no
+  crash) — see [TESTING.md](TESTING.md).
 - The **offline path** was verified end-to-end (this environment has no API key),
   proving the reproducibility guarantee holds.
 - The **grounding guard** is tested directly: a crafted answer naming a
   non-retrieved song is correctly flagged as a hallucination and discarded.
 
 **What did not work at first / what I had to fix**
+- Manual evaluation caught the offline parser matching genre **"pop" inside the
+  word "popular"**, so *"intense rock … popular hits"* mis-parsed as pop; fixed
+  with **word-boundary matching** and locked with a regression test.
 - An early energy term could go **negative** on out-of-range input and cancel the
   genre/mood match; fixed by clamping the target to `[0,1]` and flooring the term
   at 0 (covered by a regression test).
